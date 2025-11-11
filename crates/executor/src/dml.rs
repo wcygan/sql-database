@@ -248,3 +248,473 @@ impl Executor for DeleteExec {
         &self.schema
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::helpers::{
+        assert_error_contains, assert_exhausted, assert_next_row, create_test_catalog, lit_int,
+        lit_text, MockExecutor,
+    };
+    use expr::BinaryOp;
+    use types::Value;
+
+    fn setup_context() -> (ExecutionContext<'static>, tempfile::TempDir) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let catalog = create_test_catalog();
+
+        // Leak resources for 'static lifetime (test-only pattern)
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(wal::Wal::open(temp_dir.path().join("test.wal")).unwrap()));
+
+        let ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+        (ctx, temp_dir)
+    }
+
+    // InsertExec tests
+
+    #[test]
+    fn insert_single_row() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let values = vec![lit_int(1), lit_text("alice"), ResolvedExpr::Literal(Value::Bool(true))];
+        let mut insert = InsertExec::new(table_id, vec![], values);
+
+        insert.open(&mut ctx).unwrap();
+
+        // Should return row with count of 1
+        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_exhausted(&mut insert, &mut ctx);
+
+        insert.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn insert_only_executes_once() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let values = vec![lit_int(42)];
+        let mut insert = InsertExec::new(table_id, vec![], values);
+
+        insert.open(&mut ctx).unwrap();
+
+        // First call returns count
+        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+
+        // Subsequent calls return None
+        assert_exhausted(&mut insert, &mut ctx);
+        assert_exhausted(&mut insert, &mut ctx);
+
+        insert.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn insert_open_resets_executed_flag() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let values = vec![lit_int(1)];
+        let mut insert = InsertExec::new(table_id, vec![], values);
+
+        insert.open(&mut ctx).unwrap();
+        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_exhausted(&mut insert, &mut ctx);
+
+        // Reset with open
+        insert.open(&mut ctx).unwrap();
+        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+
+        insert.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn insert_evaluates_literal_expressions() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let values = vec![
+            ResolvedExpr::Literal(Value::Int(100)),
+            ResolvedExpr::Literal(Value::Text("test".into())),
+        ];
+        let mut insert = InsertExec::new(table_id, vec![], values);
+
+        insert.open(&mut ctx).unwrap();
+        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+
+        insert.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn insert_schema_empty() {
+        let table_id = TableId(1);
+        let insert = InsertExec::new(table_id, vec![], vec![lit_int(1)]);
+
+        assert_eq!(insert.schema().len(), 0);
+    }
+
+    #[test]
+    fn insert_close_succeeds() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let mut insert = InsertExec::new(table_id, vec![], vec![lit_int(1)]);
+
+        insert.open(&mut ctx).unwrap();
+        assert!(insert.close(&mut ctx).is_ok());
+    }
+
+    #[test]
+    fn insert_multiple_values() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let values = vec![
+            lit_int(1),
+            lit_text("alice"),
+            ResolvedExpr::Literal(Value::Bool(true)),
+        ];
+        let mut insert = InsertExec::new(table_id, vec![], values);
+
+        insert.open(&mut ctx).unwrap();
+        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+
+        insert.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn insert_with_expression() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        // Use binary expression (though it doesn't have row context)
+        let expr = ResolvedExpr::Binary {
+            left: Box::new(lit_int(10)),
+            op: BinaryOp::Eq,
+            right: Box::new(lit_int(10)),
+        };
+
+        let values = vec![expr];
+        let mut insert = InsertExec::new(table_id, vec![], values);
+
+        insert.open(&mut ctx).unwrap();
+        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+
+        insert.close(&mut ctx).unwrap();
+    }
+
+    // UpdateExec tests
+
+    #[test]
+    fn update_no_matching_rows() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        // Empty input
+        let input = Box::new(MockExecutor::new(vec![], vec![]));
+        let assignments = vec![(0, lit_int(100))];
+
+        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+
+        update.open(&mut ctx).unwrap();
+        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(0)]));
+        assert_exhausted(&mut update, &mut ctx);
+
+        update.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn update_single_row() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let rows = vec![Row(vec![Value::Int(1), Value::Text("alice".into())])];
+        let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
+        let assignments = vec![(0, lit_int(100))];
+
+        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+
+        update.open(&mut ctx).unwrap();
+        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_exhausted(&mut update, &mut ctx);
+
+        update.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn update_multiple_rows() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let rows = vec![
+            Row(vec![Value::Int(1), Value::Text("alice".into())]),
+            Row(vec![Value::Int(2), Value::Text("bob".into())]),
+            Row(vec![Value::Int(3), Value::Text("carol".into())]),
+        ];
+        let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
+        let assignments = vec![(1, lit_text("updated"))];
+
+        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+
+        update.open(&mut ctx).unwrap();
+        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(3)]));
+        assert_exhausted(&mut update, &mut ctx);
+
+        update.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn update_multiple_columns() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let rows = vec![Row(vec![Value::Int(1), Value::Text("alice".into())])];
+        let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
+        let assignments = vec![(0, lit_int(100)), (1, lit_text("updated"))];
+
+        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+
+        update.open(&mut ctx).unwrap();
+        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(1)]));
+
+        update.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn update_assignment_out_of_bounds() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let rows = vec![Row(vec![Value::Int(1)])];
+        let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
+        let assignments = vec![(5, lit_int(100))]; // Column 5 doesn't exist
+
+        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+
+        update.open(&mut ctx).unwrap();
+        assert_error_contains(update.next(&mut ctx), "out of bounds");
+    }
+
+    #[test]
+    fn update_only_executes_once() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let rows = vec![Row(vec![Value::Int(1)])];
+        let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
+        let assignments = vec![(0, lit_int(100))];
+
+        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+
+        update.open(&mut ctx).unwrap();
+        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_exhausted(&mut update, &mut ctx);
+        assert_exhausted(&mut update, &mut ctx);
+
+        update.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn update_open_resets_executed_flag() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let rows = vec![Row(vec![Value::Int(1)])];
+        let input = Box::new(MockExecutor::new(rows.clone(), vec!["id".into()]));
+        let assignments = vec![(0, lit_int(100))];
+
+        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+
+        update.open(&mut ctx).unwrap();
+        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(1)]));
+
+        // Won't reset input, so won't get count again, but executed flag is reset
+        update.open(&mut ctx).unwrap();
+        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(0)])); // Input exhausted
+
+        update.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn update_schema_empty() {
+        let table_id = TableId(1);
+        let input = Box::new(MockExecutor::new(vec![], vec![]));
+        let update = UpdateExec::new(table_id, vec![], input, vec![]);
+
+        assert_eq!(update.schema().len(), 0);
+    }
+
+    #[test]
+    fn update_delegates_open_to_input() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let input = Box::new(MockExecutor::new(vec![], vec![]));
+        let mut update = UpdateExec::new(table_id, vec![], input, vec![]);
+
+        assert!(update.open(&mut ctx).is_ok());
+    }
+
+    #[test]
+    fn update_delegates_close_to_input() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let input = Box::new(MockExecutor::new(vec![], vec![]));
+        let mut update = UpdateExec::new(table_id, vec![], input, vec![]);
+
+        update.open(&mut ctx).unwrap();
+        assert!(update.close(&mut ctx).is_ok());
+    }
+
+    #[test]
+    fn update_propagates_input_error() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let input = Box::new(MockExecutor::with_next_error(common::DbError::Executor(
+            "test error".into(),
+        )));
+        let mut update = UpdateExec::new(table_id, vec![], input, vec![(0, lit_int(1))]);
+
+        update.open(&mut ctx).unwrap();
+        assert_error_contains(update.next(&mut ctx), "test error");
+    }
+
+    // DeleteExec tests
+
+    #[test]
+    fn delete_no_matching_rows() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let input = Box::new(MockExecutor::new(vec![], vec![]));
+        let mut delete = DeleteExec::new(table_id, vec![], input);
+
+        delete.open(&mut ctx).unwrap();
+        assert_next_row(&mut delete, &mut ctx, Row(vec![Value::Int(0)]));
+        assert_exhausted(&mut delete, &mut ctx);
+
+        delete.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn delete_single_row() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let rows = vec![Row(vec![Value::Int(1), Value::Text("alice".into())])];
+        let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
+        let mut delete = DeleteExec::new(table_id, vec![], input);
+
+        delete.open(&mut ctx).unwrap();
+        assert_next_row(&mut delete, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_exhausted(&mut delete, &mut ctx);
+
+        delete.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn delete_multiple_rows() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let rows = vec![
+            Row(vec![Value::Int(1), Value::Text("alice".into())]),
+            Row(vec![Value::Int(2), Value::Text("bob".into())]),
+            Row(vec![Value::Int(3), Value::Text("carol".into())]),
+        ];
+        let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
+        let mut delete = DeleteExec::new(table_id, vec![], input);
+
+        delete.open(&mut ctx).unwrap();
+        assert_next_row(&mut delete, &mut ctx, Row(vec![Value::Int(3)]));
+        assert_exhausted(&mut delete, &mut ctx);
+
+        delete.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn delete_only_executes_once() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let rows = vec![Row(vec![Value::Int(1)])];
+        let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
+        let mut delete = DeleteExec::new(table_id, vec![], input);
+
+        delete.open(&mut ctx).unwrap();
+        assert_next_row(&mut delete, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_exhausted(&mut delete, &mut ctx);
+        assert_exhausted(&mut delete, &mut ctx);
+
+        delete.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn delete_open_resets_executed_flag() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let rows = vec![Row(vec![Value::Int(1)])];
+        let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
+        let mut delete = DeleteExec::new(table_id, vec![], input);
+
+        delete.open(&mut ctx).unwrap();
+        assert_next_row(&mut delete, &mut ctx, Row(vec![Value::Int(1)]));
+
+        // Won't reset input, so count is 0
+        delete.open(&mut ctx).unwrap();
+        assert_next_row(&mut delete, &mut ctx, Row(vec![Value::Int(0)]));
+
+        delete.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn delete_schema_empty() {
+        let table_id = TableId(1);
+        let input = Box::new(MockExecutor::new(vec![], vec![]));
+        let delete = DeleteExec::new(table_id, vec![], input);
+
+        assert_eq!(delete.schema().len(), 0);
+    }
+
+    #[test]
+    fn delete_delegates_open_to_input() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let input = Box::new(MockExecutor::new(vec![], vec![]));
+        let mut delete = DeleteExec::new(table_id, vec![], input);
+
+        assert!(delete.open(&mut ctx).is_ok());
+    }
+
+    #[test]
+    fn delete_delegates_close_to_input() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let input = Box::new(MockExecutor::new(vec![], vec![]));
+        let mut delete = DeleteExec::new(table_id, vec![], input);
+
+        delete.open(&mut ctx).unwrap();
+        assert!(delete.close(&mut ctx).is_ok());
+    }
+
+    #[test]
+    fn delete_propagates_input_error() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let input = Box::new(MockExecutor::with_next_error(common::DbError::Executor(
+            "test error".into(),
+        )));
+        let mut delete = DeleteExec::new(table_id, vec![], input);
+
+        delete.open(&mut ctx).unwrap();
+        assert_error_contains(delete.next(&mut ctx), "test error");
+    }
+}

@@ -204,3 +204,363 @@ fn compute_num_pages(heap_table: &mut impl HeapTable) -> DbResult<u64> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::helpers::{assert_exhausted, assert_next_row, create_test_catalog};
+    use catalog::Column;
+    use planner::ResolvedExpr;
+    use types::{SqlType, Value};
+
+    fn setup_context() -> (ExecutionContext<'static>, tempfile::TempDir) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let catalog = create_test_catalog();
+
+        // Leak resources for 'static lifetime (test-only pattern)
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(wal::Wal::open(temp_dir.path().join("test.wal")).unwrap()));
+
+        let ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+        (ctx, temp_dir)
+    }
+
+    fn insert_test_rows(ctx: &mut ExecutionContext, table_id: TableId, rows: Vec<Row>) -> DbResult<()> {
+        let table_meta = ctx.catalog.table_by_id(table_id)?;
+        let file_path = ctx.data_dir.join(format!("{}.heap", table_meta.name));
+
+        let mut heap_table = storage::HeapFile::open(&file_path, table_id.0)?;
+
+        for row in rows {
+            heap_table.insert(&row)?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn seq_scan_empty_table() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let mut scan = SeqScanExec::new(table_id, vec!["id".into(), "name".into()]);
+
+        scan.open(&mut ctx).unwrap();
+        assert_exhausted(&mut scan, &mut ctx);
+        scan.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn seq_scan_single_row() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        // Insert a row
+        let rows = vec![Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)])];
+        insert_test_rows(&mut ctx, table_id, rows).unwrap();
+
+        let mut scan = SeqScanExec::new(table_id, vec!["id".into(), "name".into(), "active".into()]);
+
+        scan.open(&mut ctx).unwrap();
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]));
+        assert_exhausted(&mut scan, &mut ctx);
+        scan.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn seq_scan_multiple_rows() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        // Insert multiple rows
+        let rows = vec![
+            Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]),
+            Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]),
+            Row(vec![Value::Int(3), Value::Text("carol".into()), Value::Bool(true)]),
+        ];
+        insert_test_rows(&mut ctx, table_id, rows).unwrap();
+
+        let mut scan = SeqScanExec::new(table_id, vec!["id".into(), "name".into(), "active".into()]);
+
+        scan.open(&mut ctx).unwrap();
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]));
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]));
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(3), Value::Text("carol".into()), Value::Bool(true)]));
+        assert_exhausted(&mut scan, &mut ctx);
+        scan.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn seq_scan_schema_matches() {
+        let table_id = TableId(1);
+
+        let scan = SeqScanExec::new(table_id, vec!["id".into(), "name".into()]);
+
+        assert_eq!(scan.schema(), &["id", "name"]);
+    }
+
+    #[test]
+    fn seq_scan_open_resets_state() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        // Insert rows
+        let rows = vec![
+            Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]),
+            Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]),
+        ];
+        insert_test_rows(&mut ctx, table_id, rows).unwrap();
+
+        let mut scan = SeqScanExec::new(table_id, vec!["id".into(), "name".into(), "active".into()]);
+
+        // First scan
+        scan.open(&mut ctx).unwrap();
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]));
+
+        // Reset with open
+        scan.open(&mut ctx).unwrap();
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]));
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]));
+        assert_exhausted(&mut scan, &mut ctx);
+
+        scan.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn seq_scan_close_succeeds() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let mut scan = SeqScanExec::new(table_id, vec!["id".into()]);
+
+        scan.open(&mut ctx).unwrap();
+        assert!(scan.close(&mut ctx).is_ok());
+    }
+
+    #[test]
+    fn index_scan_delegates_to_seq_scan() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        // Insert rows
+        let rows = vec![
+            Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]),
+            Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]),
+        ];
+        insert_test_rows(&mut ctx, table_id, rows).unwrap();
+
+        let mut scan = IndexScanExec::new(
+            table_id,
+            "idx_users_id".into(),
+            IndexPredicate::Eq {
+                col: 0,
+                value: ResolvedExpr::Literal(Value::Int(1)),
+            },
+            vec!["id".into(), "name".into(), "active".into()],
+        );
+
+        scan.open(&mut ctx).unwrap();
+        // Should still return all rows (stub implementation uses SeqScan)
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]));
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]));
+        assert_exhausted(&mut scan, &mut ctx);
+        scan.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn index_scan_schema_matches() {
+        let table_id = TableId(1);
+
+        let scan = IndexScanExec::new(
+            table_id,
+            "idx_users_id".into(),
+            IndexPredicate::Eq {
+                col: 0,
+                value: ResolvedExpr::Literal(Value::Int(1)),
+            },
+            vec!["id".into(), "name".into()],
+        );
+
+        assert_eq!(scan.schema(), &["id", "name"]);
+    }
+
+    #[test]
+    fn index_scan_open_succeeds() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let mut scan = IndexScanExec::new(
+            table_id,
+            "idx_users_id".into(),
+            IndexPredicate::Eq {
+                col: 0,
+                value: ResolvedExpr::Literal(Value::Int(1)),
+            },
+            vec!["id".into()],
+        );
+
+        assert!(scan.open(&mut ctx).is_ok());
+        scan.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn index_scan_close_succeeds() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let mut scan = IndexScanExec::new(
+            table_id,
+            "idx_users_id".into(),
+            IndexPredicate::Eq {
+                col: 0,
+                value: ResolvedExpr::Literal(Value::Int(1)),
+            },
+            vec!["id".into()],
+        );
+
+        scan.open(&mut ctx).unwrap();
+        assert!(scan.close(&mut ctx).is_ok());
+    }
+
+    #[test]
+    fn index_scan_with_range_predicate() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        // Insert rows
+        let rows = vec![
+            Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]),
+            Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]),
+            Row(vec![Value::Int(3), Value::Text("carol".into()), Value::Bool(true)]),
+        ];
+        insert_test_rows(&mut ctx, table_id, rows).unwrap();
+
+        let mut scan = IndexScanExec::new(
+            table_id,
+            "idx_users_id".into(),
+            IndexPredicate::Range {
+                col: 0,
+                low: ResolvedExpr::Literal(Value::Int(1)),
+                high: ResolvedExpr::Literal(Value::Int(3)),
+            },
+            vec!["id".into(), "name".into(), "active".into()],
+        );
+
+        scan.open(&mut ctx).unwrap();
+        // Should return all rows (stub implementation uses SeqScan)
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]));
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]));
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(3), Value::Text("carol".into()), Value::Bool(true)]));
+        assert_exhausted(&mut scan, &mut ctx);
+        scan.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn seq_scan_unknown_table_returns_error() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(999); // Non-existent table
+
+        let mut scan = SeqScanExec::new(table_id, vec!["id".into()]);
+
+        scan.open(&mut ctx).unwrap();
+        let result = scan.next(&mut ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn seq_scan_empty_schema() {
+        let table_id = TableId(1);
+
+        let scan = SeqScanExec::new(table_id, vec![]);
+        assert_eq!(scan.schema().len(), 0);
+    }
+
+    #[test]
+    fn index_scan_empty_table() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        let mut scan = IndexScanExec::new(
+            table_id,
+            "idx_users_id".into(),
+            IndexPredicate::Eq {
+                col: 0,
+                value: ResolvedExpr::Literal(Value::Int(1)),
+            },
+            vec!["id".into()],
+        );
+
+        scan.open(&mut ctx).unwrap();
+        assert_exhausted(&mut scan, &mut ctx);
+        scan.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn index_scan_open_resets_state() {
+        let (mut ctx, _temp) = setup_context();
+        let table_id = TableId(1);
+
+        // Insert rows
+        let rows = vec![
+            Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]),
+            Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]),
+        ];
+        insert_test_rows(&mut ctx, table_id, rows).unwrap();
+
+        let mut scan = IndexScanExec::new(
+            table_id,
+            "idx_users_id".into(),
+            IndexPredicate::Eq {
+                col: 0,
+                value: ResolvedExpr::Literal(Value::Int(1)),
+            },
+            vec!["id".into(), "name".into(), "active".into()],
+        );
+
+        // First scan
+        scan.open(&mut ctx).unwrap();
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]));
+
+        // Reset with open
+        scan.open(&mut ctx).unwrap();
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]));
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]));
+        assert_exhausted(&mut scan, &mut ctx);
+
+        scan.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn seq_scan_single_column_table() {
+        let (mut ctx, _temp) = setup_context();
+
+        // Create table with single column
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut catalog = create_test_catalog();
+        catalog.create_table("numbers", vec![Column::new("value", SqlType::Int)]).unwrap();
+        let table_id = catalog.table("numbers").unwrap().id;
+
+        // Leak for 'static lifetime
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(wal::Wal::open(temp_dir.path().join("test.wal")).unwrap()));
+
+        let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+        // Insert rows
+        let rows = vec![
+            Row(vec![Value::Int(10)]),
+            Row(vec![Value::Int(20)]),
+        ];
+        insert_test_rows(&mut ctx, table_id, rows).unwrap();
+
+        let mut scan = SeqScanExec::new(table_id, vec!["value".into()]);
+
+        scan.open(&mut ctx).unwrap();
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(10)]));
+        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(20)]));
+        assert_exhausted(&mut scan, &mut ctx);
+        scan.close(&mut ctx).unwrap();
+    }
+}
