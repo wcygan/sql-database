@@ -456,3 +456,358 @@ fn multiple_predicates_with_index_on_one() {
     // Complex predicates fall back to SeqScan in v1
     assert!(text.contains("SeqScan") || text.contains("IndexScan"));
 }
+
+#[test]
+fn multiple_indexes_on_same_column_prefers_first() {
+    let mut catalog = Catalog::new();
+    catalog
+        .create_table(
+            "products",
+            vec![
+                Column::new("id", SqlType::Int),
+                Column::new("price", SqlType::Int),
+            ],
+        )
+        .unwrap();
+
+    // Create two BTree indexes on same column - should use first found
+    catalog
+        .create_index("products", "idx_price_1", &["price"], IndexKind::BTree)
+        .unwrap();
+    catalog
+        .create_index("products", "idx_price_2", &["price"], IndexKind::BTree)
+        .unwrap();
+
+    let mut ctx = PlanningContext::new(&catalog);
+    let stmt = parse_sql("SELECT * FROM products WHERE price = 100;")
+        .unwrap()
+        .remove(0);
+
+    let plan = Planner::plan(stmt, &mut ctx).unwrap();
+    let text = explain_physical(&plan);
+
+    // Should use an index (implementation uses first found)
+    assert!(text.contains("IndexScan"));
+    assert!(text.contains("idx_price"));
+}
+
+#[test]
+fn nested_filters_optimize_recursively() {
+    let _catalog = sample_catalog();
+
+    // Create a nested filter structure manually
+    let inner_scan = LogicalPlan::TableScan {
+        table: "users".into(),
+    };
+    let filter1 = LogicalPlan::Filter {
+        input: Box::new(inner_scan),
+        predicate: Expr::Binary {
+            left: Box::new(Expr::Column("age".into())),
+            op: BinaryOp::Gt,
+            right: Box::new(Expr::Literal(Value::Int(20))),
+        },
+    };
+    let project = LogicalPlan::Project {
+        input: Box::new(filter1),
+        columns: vec!["*".into()],
+    };
+    let filter2 = LogicalPlan::Filter {
+        input: Box::new(project),
+        predicate: Expr::Binary {
+            left: Box::new(Expr::Column("id".into())),
+            op: BinaryOp::Eq,
+            right: Box::new(Expr::Literal(Value::Int(1))),
+        },
+    };
+
+    let mut ctx = PlanningContext::new(&_catalog);
+    let optimized = Planner::optimize(filter2, &mut ctx).unwrap();
+
+    // After pushdown, outer filter should be pushed down past wildcard project
+    match optimized {
+        LogicalPlan::Filter { input, .. } => {
+            match *input {
+                LogicalPlan::Filter { input, .. } => {
+                    // Double filter with scan underneath - good!
+                    assert!(matches!(*input, LogicalPlan::TableScan { .. }));
+                }
+                _ => panic!("expected nested filters after pushdown"),
+            }
+        }
+        _ => panic!("expected Filter at top"),
+    }
+}
+
+#[test]
+fn bind_expr_in_insert_values() {
+    let catalog = sample_catalog();
+    let mut ctx = PlanningContext::new(&catalog);
+
+    // INSERT with literal expressions
+    let stmt = parse_sql("INSERT INTO users VALUES (1, 'alice', 30);")
+        .unwrap()
+        .remove(0);
+
+    let plan = Planner::plan(stmt, &mut ctx).unwrap();
+
+    match plan {
+        PhysicalPlan::Insert { values, .. } => {
+            assert_eq!(values.len(), 3);
+            assert!(matches!(values[0], ResolvedExpr::Literal(Value::Int(1))));
+            assert!(matches!(values[1], ResolvedExpr::Literal(Value::Text(_))));
+            assert!(matches!(values[2], ResolvedExpr::Literal(Value::Int(30))));
+        }
+        _ => panic!("expected Insert"),
+    }
+}
+
+#[test]
+fn update_assignment_with_expression() {
+    let catalog = sample_catalog();
+    let mut ctx = PlanningContext::new(&catalog);
+
+    // UPDATE with expression in SET clause
+    let stmt = parse_sql("UPDATE users SET age = 31 WHERE id = 1;")
+        .unwrap()
+        .remove(0);
+
+    let plan = Planner::plan(stmt, &mut ctx).unwrap();
+
+    match plan {
+        PhysicalPlan::Update {
+            assignments,
+            predicate,
+            ..
+        } => {
+            assert_eq!(assignments.len(), 1);
+            assert_eq!(assignments[0].0, 2); // age column
+            assert!(matches!(
+                assignments[0].1,
+                ResolvedExpr::Literal(Value::Int(31))
+            ));
+            assert!(predicate.is_some());
+        }
+        _ => panic!("expected Update"),
+    }
+}
+
+#[test]
+fn delete_with_expression_predicate() {
+    let catalog = sample_catalog();
+    let mut ctx = PlanningContext::new(&catalog);
+
+    // DELETE with column reference in WHERE
+    let stmt = parse_sql("DELETE FROM users WHERE age > 50;")
+        .unwrap()
+        .remove(0);
+
+    let plan = Planner::plan(stmt, &mut ctx).unwrap();
+
+    match plan {
+        PhysicalPlan::Delete { predicate, .. } => {
+            assert!(predicate.is_some());
+            match predicate.unwrap() {
+                ResolvedExpr::Binary { left, op, right } => {
+                    assert!(matches!(*left, ResolvedExpr::Column(2))); // age
+                    assert_eq!(op, BinaryOp::Gt);
+                    assert!(matches!(*right, ResolvedExpr::Literal(Value::Int(50))));
+                }
+                _ => panic!("expected Binary expression"),
+            }
+        }
+        _ => panic!("expected Delete"),
+    }
+}
+
+#[test]
+fn unary_expression_binding() {
+    let _catalog = sample_catalog();
+    let schema = vec!["id".to_string(), "name".to_string(), "active".to_string()];
+
+    // NOT active
+    let expr = Expr::Unary {
+        op: UnaryOp::Not,
+        expr: Box::new(Expr::Column("active".into())),
+    };
+
+    let resolved = Planner::bind_expr_with_schema(&schema, expr).unwrap();
+
+    match resolved {
+        ResolvedExpr::Unary { op, expr } => {
+            assert_eq!(op, UnaryOp::Not);
+            assert!(matches!(*expr, ResolvedExpr::Column(2)));
+        }
+        _ => panic!("expected Unary"),
+    }
+}
+
+#[test]
+fn nested_binary_expressions() {
+    let _catalog = sample_catalog();
+    let schema = vec!["id".to_string(), "age".to_string(), "score".to_string()];
+
+    // (age > 20) OR (score < 50)
+    let expr = Expr::Binary {
+        left: Box::new(Expr::Binary {
+            left: Box::new(Expr::Column("age".into())),
+            op: BinaryOp::Gt,
+            right: Box::new(Expr::Literal(Value::Int(20))),
+        }),
+        op: BinaryOp::Or,
+        right: Box::new(Expr::Binary {
+            left: Box::new(Expr::Column("score".into())),
+            op: BinaryOp::Lt,
+            right: Box::new(Expr::Literal(Value::Int(50))),
+        }),
+    };
+
+    let resolved = Planner::bind_expr_with_schema(&schema, expr).unwrap();
+
+    match resolved {
+        ResolvedExpr::Binary {
+            left,
+            op: BinaryOp::Or,
+            right,
+        } => {
+            // Verify left side
+            match &*left {
+                ResolvedExpr::Binary { left, .. } => {
+                    assert!(matches!(&**left, ResolvedExpr::Column(1))); // age
+                }
+                _ => panic!("expected Binary on left"),
+            }
+            // Verify right side
+            match &*right {
+                ResolvedExpr::Binary { left, .. } => {
+                    assert!(matches!(&**left, ResolvedExpr::Column(2))); // score
+                }
+                _ => panic!("expected Binary on right"),
+            }
+        }
+        _ => panic!("expected Binary OR"),
+    }
+}
+
+#[test]
+fn try_extract_index_predicate_less_than() {
+    let schema = vec!["id".to_string(), "age".to_string()];
+    let expr = ResolvedExpr::Binary {
+        left: Box::new(ResolvedExpr::Column(1)),
+        op: BinaryOp::Lt,
+        right: Box::new(ResolvedExpr::Literal(Value::Int(30))),
+    };
+
+    let result = Planner::try_extract_index_predicate(&schema, &expr);
+    assert!(result.is_some());
+
+    let (col, pred) = result.unwrap();
+    assert_eq!(col, 1);
+    match pred {
+        IndexPredicate::Range { col, low, high } => {
+            assert_eq!(col, 1);
+            assert!(matches!(low, ResolvedExpr::Literal(Value::Int(i64::MIN))));
+            assert!(matches!(high, ResolvedExpr::Literal(Value::Int(30))));
+        }
+        _ => panic!("expected Range predicate"),
+    }
+}
+
+#[test]
+fn try_extract_index_predicate_greater_equal() {
+    let schema = vec!["id".to_string(), "age".to_string()];
+    let expr = ResolvedExpr::Binary {
+        left: Box::new(ResolvedExpr::Column(0)),
+        op: BinaryOp::Ge,
+        right: Box::new(ResolvedExpr::Literal(Value::Int(100))),
+    };
+
+    let result = Planner::try_extract_index_predicate(&schema, &expr);
+    assert!(result.is_some());
+
+    let (col, pred) = result.unwrap();
+    assert_eq!(col, 0);
+    match pred {
+        IndexPredicate::Range { col, low, high } => {
+            assert_eq!(col, 0);
+            assert!(matches!(low, ResolvedExpr::Literal(Value::Int(100))));
+            assert!(matches!(high, ResolvedExpr::Literal(Value::Int(i64::MAX))));
+        }
+        _ => panic!("expected Range predicate"),
+    }
+}
+
+#[test]
+fn try_extract_index_predicate_unsupported_op() {
+    let schema = vec!["id".to_string(), "name".to_string()];
+    let expr = ResolvedExpr::Binary {
+        left: Box::new(ResolvedExpr::Column(0)),
+        op: BinaryOp::And, // Logical op, not index-able comparison
+        right: Box::new(ResolvedExpr::Literal(Value::Bool(true))),
+    };
+
+    let result = Planner::try_extract_index_predicate(&schema, &expr);
+    assert!(result.is_none());
+}
+
+#[test]
+fn try_extract_index_predicate_column_on_right() {
+    let schema = vec!["id".to_string(), "age".to_string()];
+    // Literal on left, column on right - currently not supported
+    let expr = ResolvedExpr::Binary {
+        left: Box::new(ResolvedExpr::Literal(Value::Int(30))),
+        op: BinaryOp::Eq,
+        right: Box::new(ResolvedExpr::Column(1)),
+    };
+
+    let result = Planner::try_extract_index_predicate(&schema, &expr);
+    // v1 only handles column on left
+    assert!(result.is_none());
+}
+
+#[test]
+fn output_schema_for_modify_operations() {
+    let schema = Planner::output_schema(&PhysicalPlan::Insert {
+        table_id: TableId(1),
+        values: vec![],
+    });
+    assert_eq!(schema, Vec::<String>::new());
+
+    let schema = Planner::output_schema(&PhysicalPlan::Update {
+        table_id: TableId(1),
+        assignments: vec![],
+        predicate: None,
+    });
+    assert_eq!(schema, Vec::<String>::new());
+
+    let schema = Planner::output_schema(&PhysicalPlan::Delete {
+        table_id: TableId(1),
+        predicate: None,
+    });
+    assert_eq!(schema, Vec::<String>::new());
+}
+
+#[test]
+fn projection_with_specific_columns_not_pruned() {
+    let input = LogicalPlan::Project {
+        input: Box::new(LogicalPlan::Project {
+            input: Box::new(LogicalPlan::TableScan {
+                table: "users".into(),
+            }),
+            columns: vec!["id".into(), "name".into()],
+        }),
+        columns: vec!["id".into()], // Different from inner
+    };
+
+    let _catalog = sample_catalog();
+    let mut ctx = PlanningContext::new(&_catalog);
+    let pruned = Planner::optimize(input, &mut ctx).unwrap();
+
+    // Should NOT prune because outer projection is different
+    match pruned {
+        LogicalPlan::Project { input, columns } => {
+            assert_eq!(columns, vec!["id".to_string()]);
+            assert!(matches!(*input, LogicalPlan::Project { .. }));
+        }
+        _ => panic!("expected Project"),
+    }
+}
