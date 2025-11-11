@@ -8,6 +8,7 @@ bon = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 types = { workspace = true }
+tabled = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

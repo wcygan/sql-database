@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests;
 
+pub mod pretty;
+
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, io, path::PathBuf};
 use thiserror::Error;
