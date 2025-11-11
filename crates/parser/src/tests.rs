@@ -166,8 +166,7 @@ fn select_requires_from_clause_and_single_table() {
     let err = parse_sql("SELECT 1").expect_err("FROM clause should be required");
     assert!(format!("{err:?}").contains("SELECT requires FROM clause"));
 
-    let err =
-        parse_sql("SELECT * FROM users, posts").expect_err("multi-table select should fail");
+    let err = parse_sql("SELECT * FROM users, posts").expect_err("multi-table select should fail");
     assert!(format!("{err:?}").contains("joins not supported"));
 }
 
@@ -179,8 +178,8 @@ fn insert_requires_values_clause() {
 
 #[test]
 fn literal_parsing_requires_ints() {
-    let err = parse_sql("INSERT INTO users VALUES (1.5)")
-        .expect_err("non-integer literal should fail");
+    let err =
+        parse_sql("INSERT INTO users VALUES (1.5)").expect_err("non-integer literal should fail");
     assert!(format!("{err:?}").contains("invalid int literal"));
 }
 
@@ -191,16 +190,16 @@ fn unsupported_binary_and_unary_ops_report_errors() {
     let msg = format!("{err:?}");
     assert!(msg.contains("unsupported operator"), "{msg}");
 
-    let err = parse_sql("SELECT * FROM users WHERE -id = 1")
-        .expect_err("unary minus should be rejected");
+    let err =
+        parse_sql("SELECT * FROM users WHERE -id = 1").expect_err("unary minus should be rejected");
     let msg = format!("{err:?}");
     assert!(msg.contains("unsupported unary operator"), "{msg}");
 }
 
 #[test]
 fn wildcard_options_not_supported() {
-    let err = parse_sql("SELECT * EXCEPT (name) FROM users")
-        .expect_err("wildcard options should fail");
+    let err =
+        parse_sql("SELECT * EXCEPT (name) FROM users").expect_err("wildcard options should fail");
     assert!(format!("{err:?}").contains("wildcard options not supported"));
 }
 
@@ -406,8 +405,7 @@ fn select_rejects_values_and_set_operations() {
 
 #[test]
 fn select_item_limitations() {
-    let err = parse_sql("SELECT users.* FROM users")
-        .expect_err("qualified wildcards should fail");
+    let err = parse_sql("SELECT users.* FROM users").expect_err("qualified wildcards should fail");
     assert!(
         format!("{err:?}").contains("qualified wildcard not supported"),
         "{err:?}"
@@ -423,8 +421,8 @@ fn select_item_limitations() {
 
 #[test]
 fn derived_table_sources_rejected() {
-    let err = parse_sql("SELECT * FROM (SELECT 1) sub")
-        .expect_err("derived tables in FROM should fail");
+    let err =
+        parse_sql("SELECT * FROM (SELECT 1) sub").expect_err("derived tables in FROM should fail");
     assert!(
         format!("{err:?}").contains("unsupported table factor"),
         "{err:?}"
@@ -494,15 +492,13 @@ fn comparison_and_logical_operators_parse_correctly() {
     match selection {
         Expr::Binary { op, left, right } => {
             assert_eq!(op, expr::BinaryOp::And);
-            let check_or = |expr: &Expr, first: expr::BinaryOp, second: expr::BinaryOp| {
-                match expr {
-                    Expr::Binary { op, left, right } => {
-                        assert_eq!(*op, expr::BinaryOp::Or);
-                        assert!(matches!(**left, Expr::Binary { op, .. } if op == first));
-                        assert!(matches!(**right, Expr::Binary { op, .. } if op == second));
-                    }
-                    other => panic!("expected OR branch, got {other:?}"),
+            let check_or = |expr: &Expr, first: expr::BinaryOp, second: expr::BinaryOp| match expr {
+                Expr::Binary { op, left, right } => {
+                    assert_eq!(*op, expr::BinaryOp::Or);
+                    assert!(matches!(**left, Expr::Binary { op, .. } if op == first));
+                    assert!(matches!(**right, Expr::Binary { op, .. } if op == second));
                 }
+                other => panic!("expected OR branch, got {other:?}"),
             };
             check_or(&left, expr::BinaryOp::Lt, expr::BinaryOp::Le);
             check_or(&right, expr::BinaryOp::Gt, expr::BinaryOp::Ge);
@@ -513,8 +509,7 @@ fn comparison_and_logical_operators_parse_correctly() {
 
 #[test]
 fn unary_plus_is_rejected() {
-    let err = parse_sql("SELECT * FROM users WHERE +id = 1")
-        .expect_err("unary plus should fail");
+    let err = parse_sql("SELECT * FROM users WHERE +id = 1").expect_err("unary plus should fail");
     assert!(
         format!("{err:?}").contains("unsupported unary operator"),
         "{err:?}"
@@ -528,4 +523,79 @@ fn create_index_supports_qualified_columns() {
         Statement::CreateIndex { column, .. } => assert_eq!(column, "name"),
         other => panic!("expected CreateIndex, got {other:?}"),
     }
+}
+
+#[test]
+fn not_equal_operator_is_supported() {
+    let sql = "SELECT * FROM users WHERE id != 5";
+    let stmt = stmt(sql);
+    match stmt {
+        Statement::Select { selection, .. } => {
+            let selection = selection.expect("WHERE clause required");
+            match selection {
+                Expr::Binary { op, .. } => {
+                    assert_eq!(op, expr::BinaryOp::Ne, "expected NotEq operator");
+                }
+                other => panic!("expected binary comparison, got {other:?}"),
+            }
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+}
+
+#[test]
+fn not_operator_is_supported() {
+    let sql = "SELECT * FROM users WHERE NOT active";
+    let stmt = stmt(sql);
+    match stmt {
+        Statement::Select { selection, .. } => {
+            let selection = selection.expect("WHERE clause required");
+            match selection {
+                Expr::Unary { op, .. } => {
+                    assert_eq!(op, expr::UnaryOp::Not, "expected NOT operator");
+                }
+                other => panic!("expected unary NOT, got {other:?}"),
+            }
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+}
+
+#[test]
+fn or_operator_is_supported() {
+    let sql = "SELECT * FROM users WHERE id = 1 OR id = 2";
+    let stmt = stmt(sql);
+    match stmt {
+        Statement::Select { selection, .. } => {
+            let selection = selection.expect("WHERE clause required");
+            match selection {
+                Expr::Binary { op, .. } => {
+                    assert_eq!(op, expr::BinaryOp::Or, "expected OR operator");
+                }
+                other => panic!("expected binary OR, got {other:?}"),
+            }
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+}
+
+#[test]
+fn update_assignment_requires_valid_expressions() {
+    // Test UPDATE with complex unsupported expression in assignment
+    let err = parse_sql("UPDATE users SET score = score + 10 WHERE id = 1")
+        .expect_err("arithmetic in assignment should fail");
+    assert!(
+        format!("{err:?}").contains("unsupported operator"),
+        "expected unsupported operator error, got: {err:?}"
+    );
+}
+
+#[test]
+fn invalid_sql_syntax_produces_parse_error() {
+    // Test completely invalid SQL to trigger sqlparser error
+    let err = parse_sql("SELECTTTT FROMM users WHEREE").expect_err("invalid SQL should fail");
+    assert!(
+        format!("{err:?}").contains("SQL parse error"),
+        "expected SQL parse error, got: {err:?}"
+    );
 }

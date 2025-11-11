@@ -90,10 +90,7 @@ fn page_slot_bounds_checks() {
     let err = page.read_slot(u16::MAX).unwrap_err();
     assert!(matches!(err, DbError::Storage(_)));
 
-    let slot = Slot {
-        offset: 0,
-        len: 0,
-    };
+    let slot = Slot { offset: 0, len: 0 };
     let err = page.write_slot(u16::MAX, &slot).unwrap_err();
     assert!(matches!(err, DbError::Storage(_)));
 }
