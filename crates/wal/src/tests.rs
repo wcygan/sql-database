@@ -616,8 +616,8 @@ fn unicode_and_special_characters() {
 
     let test_strings = vec![
         "Hello, 世界!",          // Chinese
-        "Привет мир",           // Russian
-        "مرحبا بالعالم",        // Arabic
+        "Привет мир",            // Russian
+        "مرحبا بالعالم",         // Arabic
         "🚀🎉💻",                // Emojis
         "Tab\tNewline\nQuote\"", // Special chars
         "",                      // Empty string
@@ -705,7 +705,9 @@ fn record_with_many_fields() {
 
     let replayed = Wal::replay(&file).unwrap();
     match &replayed[0] {
-        WalRecord::Insert { row: replayed_row, .. } => {
+        WalRecord::Insert {
+            row: replayed_row, ..
+        } => {
             assert_eq!(replayed_row.len(), 1000);
             assert_eq!(replayed_row[0], Int(0));
             assert_eq!(replayed_row[999], Int(999));
@@ -962,7 +964,7 @@ fn stress_mixed_sizes() {
     // Mix of small, medium, and large records
     for i in 0..100 {
         let row = match i % 3 {
-            0 => vec![Int(i)], // Small
+            0 => vec![Int(i)],                      // Small
             1 => vec![Text("medium ".repeat(100))], // Medium
             _ => vec![Text("large ".repeat(1000))], // Large
         };

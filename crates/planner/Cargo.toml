@@ -1,0 +1,15 @@
+[package]
+name = "planner"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+catalog = { workspace = true }
+common = { workspace = true }
+expr = { workspace = true }
+parser = { workspace = true }
+types = { workspace = true }
+hashbrown = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

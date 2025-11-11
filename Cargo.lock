@@ -281,6 +281,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "planner"
+version = "0.1.0"
+dependencies = [
+ "catalog",
+ "common",
+ "expr",
+ "hashbrown 0.14.5",
+ "parser",
+ "pretty_assertions",
+ "types",
+]
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"

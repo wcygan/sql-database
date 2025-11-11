@@ -5,14 +5,19 @@ members = [
     "crates/expr",
     "crates/parser",
     "crates/catalog",
-    "crates/storage", "crates/buffer", "crates/wal",
+    "crates/storage",
+    "crates/buffer",
+    "crates/wal",
+    "crates/planner",
 ]
 
 resolver = "2"
 
 [workspace.dependencies]
+catalog = { path = "crates/catalog" }
 common = { path = "crates/common" }
 expr = { path = "crates/expr" }
+parser = { path = "crates/parser" }
 types = { path = "crates/types" }
 proptest = "1.9.0"
 pretty_assertions = "1"
