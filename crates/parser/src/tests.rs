@@ -126,8 +126,11 @@ fn reject_multi_row_insert() {
 #[test]
 fn reject_aliases_and_joins() {
     // SELECT aliases not supported.
-    let result = parse_sql("SELECT name AS n FROM users");
-    assert!(result.is_err(), "aliases should be rejected");
+    let err = parse_sql("SELECT name AS n FROM users").expect_err("aliases should be rejected");
+    assert!(
+        format!("{err:?}").contains("select aliases not supported"),
+        "{err:?}"
+    );
 
     // JOINs not supported.
     let result = parse_sql("SELECT * FROM users u JOIN posts p ON u.id = p.user_id");
@@ -377,4 +380,152 @@ fn sql_subset_v1_example_script() {
         stmts[10],
         Statement::DropTable { ref name } if name == "users"
     ));
+}
+
+#[test]
+fn reject_create_view_statement() {
+    let err = parse_sql("CREATE VIEW v AS SELECT * FROM users")
+        .expect_err("CREATE VIEW should be rejected");
+    assert!(format!("{err:?}").contains("unsupported statement"));
+}
+
+#[test]
+fn select_rejects_values_and_set_operations() {
+    let err = parse_sql("VALUES (1)").expect_err("standalone VALUES should fail");
+    assert!(
+        format!("{err:?}").contains("standalone VALUES not supported"),
+        "{err:?}"
+    );
+
+    let err = parse_sql("SELECT 1 UNION SELECT 2").expect_err("SET ops should fail");
+    assert!(
+        format!("{err:?}").contains("SET operations not supported"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn select_item_limitations() {
+    let err = parse_sql("SELECT users.* FROM users")
+        .expect_err("qualified wildcards should fail");
+    assert!(
+        format!("{err:?}").contains("qualified wildcard not supported"),
+        "{err:?}"
+    );
+
+    let err = parse_sql("SELECT id + 1 FROM users")
+        .expect_err("complex projection expressions should fail");
+    assert!(
+        format!("{err:?}").contains("unsupported select item"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn derived_table_sources_rejected() {
+    let err = parse_sql("SELECT * FROM (SELECT 1) sub")
+        .expect_err("derived tables in FROM should fail");
+    assert!(
+        format!("{err:?}").contains("unsupported table factor"),
+        "{err:?}"
+    );
+
+    let err = parse_sql("DELETE FROM (SELECT 1) sub")
+        .expect_err("DELETE should also reject derived tables");
+    assert!(
+        format!("{err:?}").contains("unsupported table factor"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn compound_identifiers_and_nested_exprs_parse() {
+    let stmt = stmt("SELECT * FROM users WHERE (users.id) = (1)");
+    let selection = match stmt {
+        Statement::Select { selection, .. } => selection.expect("WHERE clause required"),
+        other => panic!("expected Select, got {other:?}"),
+    };
+
+    match selection {
+        Expr::Binary { left, right, .. } => {
+            assert!(
+                matches!(*left, Expr::Column(ref c) if c == "id"),
+                "compound identifier should become column: {left:?}"
+            );
+            assert!(
+                matches!(*right, Expr::Literal(Value::Int(1))),
+                "nested literal should parse: {right:?}"
+            );
+        }
+        other => panic!("expected binary comparison, got {other:?}"),
+    }
+}
+
+#[test]
+fn unsupported_exists_expressions_report_errors() {
+    let err = parse_sql("SELECT * FROM users WHERE EXISTS (SELECT 1 FROM users)")
+        .expect_err("EXISTS expressions should fail");
+    assert!(format!("{err:?}").contains("unsupported expr"), "{err:?}");
+}
+
+#[test]
+fn boolean_and_null_literals_are_supported() {
+    let stmt = stmt("INSERT INTO flags VALUES (TRUE, NULL)");
+    match stmt {
+        Statement::Insert { values, .. } => {
+            assert!(matches!(values[0], Expr::Literal(Value::Bool(true))));
+            assert!(matches!(values[1], Expr::Literal(Value::Null)));
+        }
+        other => panic!("expected Insert, got {other:?}"),
+    }
+}
+
+#[test]
+fn comparison_and_logical_operators_parse_correctly() {
+    let stmt = stmt(
+        "SELECT * FROM users \
+         WHERE (age < 18 OR age <= 21) AND (age > 65 OR age >= 80)",
+    );
+    let selection = match stmt {
+        Statement::Select { selection, .. } => selection.expect("WHERE clause required"),
+        other => panic!("expected Select, got {other:?}"),
+    };
+
+    match selection {
+        Expr::Binary { op, left, right } => {
+            assert_eq!(op, expr::BinaryOp::And);
+            let check_or = |expr: &Expr, first: expr::BinaryOp, second: expr::BinaryOp| {
+                match expr {
+                    Expr::Binary { op, left, right } => {
+                        assert_eq!(*op, expr::BinaryOp::Or);
+                        assert!(matches!(**left, Expr::Binary { op, .. } if op == first));
+                        assert!(matches!(**right, Expr::Binary { op, .. } if op == second));
+                    }
+                    other => panic!("expected OR branch, got {other:?}"),
+                }
+            };
+            check_or(&left, expr::BinaryOp::Lt, expr::BinaryOp::Le);
+            check_or(&right, expr::BinaryOp::Gt, expr::BinaryOp::Ge);
+        }
+        other => panic!("expected binary AND, got {other:?}"),
+    }
+}
+
+#[test]
+fn unary_plus_is_rejected() {
+    let err = parse_sql("SELECT * FROM users WHERE +id = 1")
+        .expect_err("unary plus should fail");
+    assert!(
+        format!("{err:?}").contains("unsupported unary operator"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn create_index_supports_qualified_columns() {
+    let stmt = stmt("CREATE INDEX idx_users_name ON users (users.name)");
+    match stmt {
+        Statement::CreateIndex { column, .. } => assert_eq!(column, "name"),
+        other => panic!("expected CreateIndex, got {other:?}"),
+    }
 }
