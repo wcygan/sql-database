@@ -329,6 +329,123 @@ pub struct PublicType { ... }
 mod tests { ... }
 ```
 
+## Common Pitfalls and Solutions
+
+### Test Module Configuration
+
+**Problem:** Tests fail to compile with "unresolved import" errors for dev-dependencies.
+
+**Solution:** Always add `#[cfg(test)]` attribute to test modules:
+```rust
+#[cfg(test)]
+mod tests;
+```
+
+This ensures test-only imports (like `tempfile`) are only compiled during test runs.
+
+### File I/O and Clippy Warnings
+
+**Problem:** Clippy warns about "file opened with `create`, but `truncate` behavior not defined".
+
+**Solution:** Explicitly specify truncate behavior when using `create(true)`:
+```rust
+// For append-only files (don't truncate existing content)
+OpenOptions::new()
+    .read(true)
+    .write(true)
+    .create(true)
+    .truncate(false)  // Keep existing content
+    .open(&path)?;
+
+// For overwriting files
+OpenOptions::new()
+    .write(true)
+    .create(true)
+    .truncate(true)   // Overwrite existing content
+    .open(&path)?;
+```
+
+### Page Allocation and File Extension
+
+**Problem:** Sequential ID allocation fails because the file doesn't actually extend until data is written.
+
+**Solution:** Write the page to disk immediately after allocation to reserve the space:
+```rust
+fn allocate_page(&mut self, table: TableId) -> DbResult<PageId> {
+    let pid = PageId(file_len / PAGE_SIZE);
+    let page = Page::new(pid.0);
+
+    // Write immediately to extend the file
+    self.write_page(table, &page)?;
+
+    // Then add to cache
+    self.cache.push((table, pid), page);
+    Ok(pid)
+}
+```
+
+### Coverage Script Usage
+
+**Problem:** Running `scripts/coverage.sh -- --package crate-name` fails with "Unrecognized option: 'package'".
+
+**Solution:** Use `cargo llvm-cov` directly for single-crate coverage:
+```bash
+# Correct approach
+cargo llvm-cov --package crate-name --html
+
+# View summary
+cargo llvm-cov --package crate-name --summary-only
+```
+
+The workspace `scripts/coverage.sh` is designed for full workspace coverage, not filtered runs.
+
+### Import Organization
+
+**Problem:** Rustfmt reorders imports in unexpected ways.
+
+**Solution:** Follow rustfmt's preference:
+- External crates first (alphabetically)
+- Then standard library imports
+- Import items alphabetically within each use statement
+```rust
+use common::{DbError, DbResult, PageId, TableId};
+use hashbrown::HashMap;
+use lru::LruCache;
+use std::{
+    fs::OpenOptions,
+    io::{Read, Seek, SeekFrom, Write},
+    num::NonZeroUsize,
+    path::PathBuf,
+};
+use storage::{PAGE_SIZE, Page};  // Items sorted alphabetically
+```
+
+### Function Coverage Targets
+
+**Problem:** Coverage shows low function coverage (e.g., 50%) even when tests seem comprehensive.
+
+**Solution:** Test error paths and edge cases explicitly:
+- Test functions that return `Result<T>` with both success and error cases
+- Test private helper functions indirectly through public API
+- Add tests for all public trait implementations
+- Test panic conditions with `#[should_panic]`
+- Target 90%+ line coverage and 85%+ function coverage
+
+Example:
+```rust
+#[test]
+fn test_error_path() {
+    let result = operation_that_can_fail();
+    assert!(matches!(result, Err(DbError::Storage(_))));
+}
+
+#[test]
+#[should_panic(expected = "descriptive message")]
+fn test_panic_condition() {
+    function_that_panics();
+}
+```
+
 ## Validation Checklist
 
 Before completing crate creation:
@@ -346,6 +463,9 @@ Before completing crate creation:
 - [ ] `cargo test -p crate-name` passes
 - [ ] `cargo fmt -- --check` passes
 - [ ] `cargo clippy -p crate-name --all-targets` passes
+- [ ] `cargo llvm-cov --package crate-name --summary-only` shows 85%+ function coverage
+- [ ] `cargo llvm-cov --package crate-name --summary-only` shows 90%+ line coverage
+- [ ] Error paths and edge cases are explicitly tested
 
 ## Output Format
 
