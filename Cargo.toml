@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/types",
+]
+
+# optional, but recommended for reproducible builds
+resolver = "2"
