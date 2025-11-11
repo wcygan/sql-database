@@ -17,6 +17,7 @@
 - `cargo test` — executes all unit and property tests across workspace members.
 - `cargo fmt -- --check` — verify formatting before submitting changes; omit `--check` to auto-format.
 - `cargo clippy --all-targets --all-features` — run lints to enforce idiomatic Rust.
+- `scripts/coverage.sh` — wraps `cargo llvm-cov` to run workspace-wide tests with coverage instrumentation, emitting both HTML (`target/llvm-cov/html/index.html`) and LCOV (`target/llvm-cov/lcov.info`) outputs; install the tool once via `cargo install cargo-llvm-cov`. Pass extra cargo filters (e.g., `-- --package parser`) to narrow the run.
 
 ## Coding Style & Naming Conventions
 - Follow `rustfmt` defaults (4-space indentation, trailing commas for multi-line literals).
@@ -29,6 +30,7 @@
 - Property-based tests in `crates/types` leverage `proptest`; name them `prop_*` for clarity.
 - Add targeted integration tests in `tests/` directories when behavior spans crates.
 - Run `cargo test` locally before opening a PR; include failing-seed reproduction steps if a proptest fails.
+- When you need executable documentation for test coverage, run `scripts/coverage.sh`; it runs the entire workspace with coverage instrumentation and leaves reports under `target/llvm-cov/`.
 
 ## Commit & Pull Request Guidelines
 - Write commits in the imperative mood, e.g., `Pin workspace dependencies` or `Add row serialization tests`.
