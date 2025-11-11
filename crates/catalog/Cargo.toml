@@ -1,0 +1,16 @@
+[package]
+name = "catalog"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+hashbrown = { workspace = true }
+ahash = { workspace = true }
+types = { workspace = true }
+common = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
