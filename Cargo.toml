@@ -11,6 +11,7 @@ members = [
     "crates/planner",
     "crates/executor",
     "crates/wal-viewer",
+    "crates/repl",
 ]
 
 resolver = "2"
@@ -43,3 +44,4 @@ bon = "3"
 anyhow = "1.0.100"
 clap = { version = "4.5.51", features = ["derive"] }
 tabled = "0.20.0"
+rustyline = "13.0.0"
