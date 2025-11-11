@@ -33,3 +33,5 @@ Coverage artifacts generated:
   HTML report: ${HTML_DIR}/index.html
   LCOV file: ${LCOV_FILE}
 EOF
+
+open "${HTML_DIR}/index.html"

@@ -31,6 +31,12 @@ end_of_record
   rg -n "SF:.*storage" -A5 target/llvm-cov/lcov.info
   ```
 - For structured prompts, consider re-exporting as JSON: `cargo llvm-cov report --json --output-path target/llvm-cov/coverage.json`.
+- When you only need a quick textual summary (or missing-line list) you can bypass the HTML entirely:
+  ```bash
+  cargo llvm-cov report --workspace --show-missing-lines
+  cargo llvm-cov report --package expr --show-missing-lines
+  ```
+  These commands reuse the instrumentation produced by `./scripts/coverage.sh` and are ideal for agents that need to quote exact uncovered line numbers without opening the HTML report.
 
 When handing data to an LLM:
 1. Trim to the files that need attention (e.g., those below a threshold or containing `DA:line,0`).

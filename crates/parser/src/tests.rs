@@ -143,6 +143,65 @@ fn reject_multi_table_delete() {
 }
 
 #[test]
+fn drop_rejects_non_table_objects() {
+    let err = parse_sql("DROP VIEW users").expect_err("DROP VIEW should fail");
+    assert!(format!("{err:?}").contains("unsupported DROP type"));
+}
+
+#[test]
+fn create_index_validates_inputs() {
+    let err = parse_sql("CREATE INDEX ON users(name)").expect_err("name required");
+    assert!(format!("{err:?}").contains("index name required"));
+
+    let err = parse_sql("CREATE INDEX idx_bad ON users((name || 'x'))")
+        .expect_err("complex index expressions not supported");
+    assert!(format!("{err:?}").contains("unsupported index column"));
+}
+
+#[test]
+fn select_requires_from_clause_and_single_table() {
+    let err = parse_sql("SELECT 1").expect_err("FROM clause should be required");
+    assert!(format!("{err:?}").contains("SELECT requires FROM clause"));
+
+    let err =
+        parse_sql("SELECT * FROM users, posts").expect_err("multi-table select should fail");
+    assert!(format!("{err:?}").contains("joins not supported"));
+}
+
+#[test]
+fn insert_requires_values_clause() {
+    let err = parse_sql("INSERT INTO users SELECT 1").expect_err("VALUES clause required");
+    assert!(format!("{err:?}").contains("INSERT expects VALUES list"));
+}
+
+#[test]
+fn literal_parsing_requires_ints() {
+    let err = parse_sql("INSERT INTO users VALUES (1.5)")
+        .expect_err("non-integer literal should fail");
+    assert!(format!("{err:?}").contains("invalid int literal"));
+}
+
+#[test]
+fn unsupported_binary_and_unary_ops_report_errors() {
+    let err = parse_sql("SELECT * FROM users WHERE (id + 1) > 2")
+        .expect_err("arithmetic ops are not supported");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("unsupported operator"), "{msg}");
+
+    let err = parse_sql("SELECT * FROM users WHERE -id = 1")
+        .expect_err("unary minus should be rejected");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("unsupported unary operator"), "{msg}");
+}
+
+#[test]
+fn wildcard_options_not_supported() {
+    let err = parse_sql("SELECT * EXCEPT (name) FROM users")
+        .expect_err("wildcard options should fail");
+    assert!(format!("{err:?}").contains("wildcard options not supported"));
+}
+
+#[test]
 fn sql_subset_v1_select_variants() {
     let select_no_filter = stmt("SELECT id, name FROM users");
     match select_no_filter {

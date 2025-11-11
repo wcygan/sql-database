@@ -28,6 +28,17 @@ This workspace standardizes on [`cargo-llvm-cov`](https://github.com/taiki-e/car
    ```
    Replace the binary URL with the appropriate OS/arch variant in CI. The uploader exits non-zero if coverage is missing, so run it after `./scripts/coverage.sh`.
 
+### Inspecting Coverage Without HTML
+`cargo llvm-cov report` can summarize results directly in the terminal, which is handy for headless environments or when you only need a quick status:
+```bash
+cargo llvm-cov report --workspace --show-missing-lines
+```
+- Add `--package expr` (or another crate) to focus on a single member.
+- Append `--json --output-path target/llvm-cov/report.json` if you need machine-readable summaries.
+- Use `--ignore-filename-regex` to omit generated or vendored files from the printed table.
+
+These invocations read the instrumentation emitted by `./scripts/coverage.sh`, so run the script (or an equivalent `cargo llvm-cov --no-report`) first to ensure the data is fresh.
+
 ### Tips
 - Use `./scripts/coverage.sh --no-clean` to reuse prior builds for faster iterations.
 - Coverage builds are unoptimized and can be slower than `cargo test`; avoid running them on every commit and prefer targeted test runs while iterating.

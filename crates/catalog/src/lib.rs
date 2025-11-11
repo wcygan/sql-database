@@ -533,6 +533,24 @@ mod tests {
         ]
     }
 
+    fn sample_table_meta(name: &str) -> TableMeta {
+        TableMeta::new(
+            TableId(1),
+            name.to_string(),
+            TableSchema::try_new(sample_columns()).unwrap(),
+        )
+    }
+
+    fn sample_index_meta(id: u64, name: &str, columns: Vec<ColumnId>) -> IndexMeta {
+        IndexMeta {
+            id: IndexId(id),
+            name: name.to_string(),
+            columns,
+            kind: IndexKind::BTree,
+            storage: StorageDescriptor::new(),
+        }
+    }
+
     #[test]
     fn create_and_lookup_table() {
         let mut catalog = Catalog::new();
@@ -660,6 +678,35 @@ mod tests {
     }
 
     #[test]
+    fn load_returns_empty_catalog_for_missing_path() {
+        let dir = tempdir().unwrap();
+        let missing_path = dir.path().join("catalog.json");
+        let mut catalog =
+            Catalog::load(&missing_path).expect("missing catalog file yields empty catalog");
+        assert!(catalog.table_names().is_empty());
+
+        // Newly loaded catalog should behave like a fresh catalog instance.
+        let new_table_id = catalog
+            .create_table("users", sample_columns())
+            .expect("table creation works");
+        assert_eq!(new_table_id, TableId(1));
+    }
+
+    #[test]
+    fn index_creation_rejects_empty_column_list() {
+        let mut catalog = Catalog::new();
+        catalog.create_table("users", sample_columns()).unwrap();
+
+        let err = catalog
+            .create_index("users", "idx_empty", &[], IndexKind::Hash)
+            .unwrap_err();
+        assert_eq!(
+            format!("{err}"),
+            "catalog: index must reference at least one column"
+        );
+    }
+
+    #[test]
     fn index_names_unique_across_tables() {
         let mut catalog = Catalog::new();
         catalog.create_table("users", sample_columns()).unwrap();
@@ -732,5 +779,124 @@ mod tests {
             .expect("users summary present");
         assert_eq!(users_summary.index_count, 1);
         assert_eq!(users_summary.column_count, 4);
+    }
+
+    #[test]
+    fn tables_iterator_and_summaries_reflect_current_state() {
+        let mut catalog = Catalog::new();
+        catalog.create_table("users", sample_columns()).unwrap();
+        catalog.create_table("orders", sample_columns()).unwrap();
+
+        let iterated_names: Vec<_> = catalog.tables().map(|t| t.name.clone()).collect();
+        assert_eq!(iterated_names, vec!["users", "orders"]);
+
+        let names = catalog.table_names();
+        assert_eq!(names, vec!["users", "orders"]);
+
+        let summaries = catalog.table_summaries();
+        assert_eq!(summaries.len(), 2);
+        assert!(summaries.iter().all(|summary| summary.column_count == 4));
+    }
+
+    #[test]
+    fn validate_table_name_rejects_empty_and_reserved() {
+        let empty_err = Catalog::validate_table_name(" ").unwrap_err();
+        assert_eq!(
+            format!("{empty_err}"),
+            "catalog: table name cannot be empty"
+        );
+
+        let reserved_err = Catalog::validate_table_name("SQLite_Master").unwrap_err();
+        assert_eq!(
+            format!("{reserved_err}"),
+            "catalog: table name 'SQLite_Master' is reserved for internal use"
+        );
+    }
+
+    #[test]
+    fn validate_index_name_rejects_empty_and_reserved() {
+        let empty_err = Catalog::validate_index_name("").unwrap_err();
+        assert_eq!(
+            format!("{empty_err}"),
+            "catalog: index name cannot be empty"
+        );
+
+        let reserved_err = Catalog::validate_index_name("_PRIMARY").unwrap_err();
+        assert_eq!(
+            format!("{reserved_err}"),
+            "catalog: index name '_PRIMARY' is reserved for internal use"
+        );
+    }
+
+    #[test]
+    fn table_meta_detects_duplicate_index_definitions() {
+        let mut table = sample_table_meta("users");
+        let index = sample_index_meta(1, "idx_users_name", vec![0]);
+        table.add_index(index.clone()).unwrap();
+        let err = table.add_index(index).unwrap_err();
+        assert_eq!(
+            format!("{err}"),
+            "catalog: index 'idx_users_name' already exists on table 'users'"
+        );
+    }
+
+    #[test]
+    fn table_meta_missing_index_operations_fail() {
+        let mut table = sample_table_meta("users");
+
+        let remove_err = table.remove_index("missing").unwrap_err();
+        assert_eq!(
+            format!("{remove_err}"),
+            "catalog: index 'missing' does not exist on table 'users'"
+        );
+
+        let lookup_err = table.index("missing").unwrap_err();
+        assert_eq!(
+            format!("{lookup_err}"),
+            "catalog: index 'missing' does not exist on table 'users'"
+        );
+
+        let id_err = table.index_by_id(IndexId(42)).unwrap_err();
+        assert_eq!(
+            format!("{id_err}"),
+            "catalog: unknown index id 42 on 'users'"
+        );
+    }
+
+    #[test]
+    fn table_meta_accessors_expose_indexes_and_columns() {
+        let mut table = sample_table_meta("users");
+        let index = sample_index_meta(1, "idx_users_name", vec![0]);
+        table.add_index(index).unwrap();
+
+        assert_eq!(table.indexes().len(), 1);
+        assert_eq!(table.indexes()[0].name, "idx_users_name");
+        assert_eq!(table.columns(), table.schema.columns());
+    }
+
+    #[test]
+    fn table_schema_requires_non_empty_columns() {
+        let err = TableSchema::try_new(vec![]).unwrap_err();
+        assert_eq!(
+            format!("{err}"),
+            "catalog: table must contain at least one column"
+        );
+    }
+
+    #[test]
+    fn table_schema_rejects_excessive_column_counts() {
+        let column_count = u16::MAX as usize + 1;
+        let columns = vec![Column::new("overflow", SqlType::Int); column_count];
+        let err = TableSchema::try_new(columns).unwrap_err();
+        assert_eq!(
+            format!("{err}"),
+            "catalog: too many columns for a single table"
+        );
+    }
+
+    #[test]
+    fn storage_descriptor_default_uses_new() {
+        let descriptor = StorageDescriptor::default();
+        assert_ne!(descriptor.file_id, Uuid::nil());
     }
 }

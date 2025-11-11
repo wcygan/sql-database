@@ -90,13 +90,12 @@ impl Page {
         if bytes.len() > u16::MAX as usize {
             return Err(DbError::Storage("row exceeds maximum tuple size".into()));
         }
-        if !self.can_fit(bytes.len())? {
-            return Err(DbError::Storage("page full".into()));
-        }
-
         let mut header = self.header()?;
         if header.num_slots == u16::MAX {
             return Err(DbError::Storage("slot index overflow".into()));
+        }
+        if !self.can_fit(bytes.len())? {
+            return Err(DbError::Storage("page full".into()));
         }
         let slot_idx = header.num_slots;
         let len = bytes.len() as u16;
