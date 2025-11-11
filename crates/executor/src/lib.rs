@@ -42,7 +42,9 @@
 //! ```
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    pub mod helpers;
+}
 
 mod builder;
 mod dml;
