@@ -1,3 +1,5 @@
+mod tests;
+
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, io, path::PathBuf};
 use thiserror::Error;
