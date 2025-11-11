@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-serde = { version = "1.0.228", features = ["derive"] }
-thiserror = "1.0.69"
-types = { path = "../types" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+types = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = { workspace = true }
