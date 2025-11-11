@@ -144,6 +144,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "executor"
+version = "0.1.0"
+dependencies = [
+ "buffer",
+ "catalog",
+ "common",
+ "expr",
+ "planner",
+ "pretty_assertions",
+ "proptest",
+ "storage",
+ "tempfile",
+ "types",
+ "wal",
+]
+
+[[package]]
 name = "expr"
 version = "0.1.0"
 dependencies = [
