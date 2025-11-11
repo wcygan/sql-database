@@ -2,12 +2,13 @@ use std::{fs, path::Path};
 
 use ahash::RandomState;
 use common::{ColumnId, DbError, DbResult, TableId};
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use types::SqlType;
 use uuid::Uuid;
 
 type Map<K, V> = HashMap<K, V, RandomState>;
+type Set<T> = HashSet<T, RandomState>;
 
 /// Unique identifier for an index definition stored in the catalog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -25,7 +26,13 @@ pub struct Catalog {
     #[serde(skip)]
     #[serde(default)]
     table_id_index: Map<TableId, usize>,
+    #[serde(skip)]
+    #[serde(default)]
+    index_name_index: Map<String, TableId>,
 }
+
+const RESERVED_TABLE_NAMES: &[&str] = &["_catalog", "sqlite_master"];
+const RESERVED_INDEX_NAMES: &[&str] = &["_primary"];
 
 impl Catalog {
     /// Create an empty catalog.
@@ -36,6 +43,7 @@ impl Catalog {
             next_index_id: 1,
             table_name_index: Map::default(),
             table_id_index: Map::default(),
+            index_name_index: Map::default(),
         };
         catalog.rebuild_indexes();
         catalog
@@ -87,6 +95,7 @@ impl Catalog {
 
     /// Create a new table with the provided columns, returning its identifier.
     pub fn create_table(&mut self, name: &str, columns: Vec<Column>) -> DbResult<TableId> {
+        Self::validate_table_name(name)?;
         if self.table_name_index.contains_key(name) {
             return Err(DbError::Catalog(format!("table '{name}' already exists")));
         }
@@ -119,6 +128,12 @@ impl Catalog {
         columns: &[&str],
         kind: IndexKind,
     ) -> DbResult<IndexId> {
+        Self::validate_index_name(index_name)?;
+        if self.index_name_index.contains_key(index_name) {
+            return Err(DbError::Catalog(format!(
+                "index '{index_name}' already exists in catalog"
+            )));
+        }
         if columns.is_empty() {
             return Err(DbError::Catalog(
                 "index must reference at least one column".into(),
@@ -127,36 +142,80 @@ impl Catalog {
         let resolved = {
             let table = self.table(table_name)?;
             let mut resolved = Vec::with_capacity(columns.len());
+            let mut seen = Set::default();
             for name in columns {
                 let ordinal = table.schema.column_index(name).ok_or_else(|| {
                     DbError::Catalog(format!("unknown column '{name}' on table '{table_name}'"))
                 })?;
+                if !seen.insert(ordinal) {
+                    return Err(DbError::Catalog(format!(
+                        "index '{index_name}' references column '{name}' multiple times"
+                    )));
+                }
+                let col_ty = table
+                    .schema
+                    .column_type(ordinal)
+                    .ok_or_else(|| DbError::Catalog("column ordinal out of range".into()))?;
+                if !kind.supports_type(col_ty) {
+                    return Err(DbError::Catalog(format!(
+                        "{kind:?} indexes cannot be built on column '{name}' of type {:?}",
+                        col_ty
+                    )));
+                }
                 resolved.push(ordinal);
             }
             resolved
         };
         let index_id = IndexId(self.next_index_id);
         self.next_index_id += 1;
-        let table = self.table_mut(table_name)?;
-        table.add_index(IndexMeta {
-            id: index_id,
-            name: index_name.to_string(),
-            columns: resolved,
-            kind,
-            storage: StorageDescriptor::new(),
-        })?;
+        let table_id = {
+            let table = self.table_mut(table_name)?;
+            let id = table.id;
+            table.add_index(IndexMeta {
+                id: index_id,
+                name: index_name.to_string(),
+                columns: resolved,
+                kind,
+                storage: StorageDescriptor::new(),
+            })?;
+            id
+        };
+        self.index_name_index
+            .insert(index_name.to_string(), table_id);
         Ok(index_id)
     }
 
     /// Drop an index attached to a table.
     pub fn drop_index(&mut self, table_name: &str, index_name: &str) -> DbResult<()> {
-        let table = self.table_mut(table_name)?;
-        table.remove_index(index_name)
+        {
+            let table = self.table_mut(table_name)?;
+            table.remove_index(index_name)?;
+        }
+        self.index_name_index.remove(index_name);
+        Ok(())
     }
 
     /// Immutable iterator over all tables.
     pub fn tables(&self) -> impl Iterator<Item = &TableMeta> {
         self.tables.iter()
+    }
+
+    /// Returns a vector of table names, useful for inspection.
+    pub fn table_names(&self) -> Vec<&str> {
+        self.tables.iter().map(|t| t.name.as_str()).collect()
+    }
+
+    /// Returns lightweight summaries for all registered tables.
+    pub fn table_summaries(&self) -> Vec<TableSummary> {
+        self.tables
+            .iter()
+            .map(|t| TableSummary {
+                id: t.id,
+                name: t.name.clone(),
+                column_count: t.schema.columns.len() as u16,
+                index_count: t.indexes.len() as u16,
+            })
+            .collect()
     }
 
     pub fn table_mut(&mut self, name: &str) -> DbResult<&mut TableMeta> {
@@ -173,11 +232,45 @@ impl Catalog {
     fn rebuild_indexes(&mut self) {
         self.table_name_index.clear();
         self.table_id_index.clear();
+        self.index_name_index.clear();
         for (idx, table) in self.tables.iter_mut().enumerate() {
             self.table_name_index.insert(table.name.clone(), idx);
             self.table_id_index.insert(table.id, idx);
             table.rebuild_index_lookup();
+            for index in &table.indexes {
+                self.index_name_index.insert(index.name.clone(), table.id);
+            }
         }
+    }
+
+    fn validate_table_name(name: &str) -> DbResult<()> {
+        if name.trim().is_empty() {
+            return Err(DbError::Catalog("table name cannot be empty".into()));
+        }
+        if RESERVED_TABLE_NAMES
+            .iter()
+            .any(|reserved| reserved.eq_ignore_ascii_case(name))
+        {
+            return Err(DbError::Catalog(format!(
+                "table name '{name}' is reserved for internal use"
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_index_name(name: &str) -> DbResult<()> {
+        if name.trim().is_empty() {
+            return Err(DbError::Catalog("index name cannot be empty".into()));
+        }
+        if RESERVED_INDEX_NAMES
+            .iter()
+            .any(|reserved| reserved.eq_ignore_ascii_case(name))
+        {
+            return Err(DbError::Catalog(format!(
+                "index name '{name}' is reserved for internal use"
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -282,6 +375,11 @@ impl TableMeta {
         &self.indexes
     }
 
+    /// Returns read-only access to the column definitions.
+    pub fn columns(&self) -> &[Column] {
+        self.schema.columns()
+    }
+
     fn rebuild_index_lookup(&mut self) {
         self.index_name_lookup.clear();
         self.index_id_lookup.clear();
@@ -339,6 +437,11 @@ impl TableSchema {
     pub fn column_type(&self, ordinal: ColumnId) -> Option<&SqlType> {
         self.columns.get(ordinal as usize).map(|c| &c.ty)
     }
+
+    /// Returns immutable access to the underlying columns.
+    pub fn columns(&self) -> &[Column] {
+        self.columns.as_slice()
+    }
 }
 
 /// Describes a logical column within a table schema.
@@ -376,6 +479,26 @@ pub enum IndexKind {
     Trie,
 }
 
+impl IndexKind {
+    fn supports_type(&self, ty: &SqlType) -> bool {
+        match self {
+            IndexKind::BTree => matches!(ty, SqlType::Int | SqlType::Text | SqlType::Bool),
+            IndexKind::Hash => matches!(ty, SqlType::Int | SqlType::Text | SqlType::Bool),
+            IndexKind::Bitmap => matches!(ty, SqlType::Bool),
+            IndexKind::Trie => matches!(ty, SqlType::Text),
+        }
+    }
+}
+
+/// Lightweight description for external inspection calls.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TableSummary {
+    pub id: TableId,
+    pub name: String,
+    pub column_count: u16,
+    pub index_count: u16,
+}
+
 /// Links catalog entries to physical storage artifacts, such as heap files.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageDescriptor {
@@ -406,6 +529,7 @@ mod tests {
             Column::new("id", SqlType::Int),
             Column::new("name", SqlType::Text),
             Column::new("age", SqlType::Int),
+            Column::new("active", SqlType::Bool),
         ]
     }
 
@@ -514,5 +638,99 @@ mod tests {
         // Adding a table after drop reuses metadata safely but increments ids.
         let next_id = catalog.create_table("orders", sample_columns()).unwrap();
         assert_eq!(next_id, TableId(2));
+    }
+
+    #[test]
+    fn reserved_table_names_rejected() {
+        let mut catalog = Catalog::new();
+        let err = catalog
+            .create_table("_catalog", sample_columns())
+            .expect_err("reserved name rejected");
+        assert!(format!("{err}").contains("reserved"));
+    }
+
+    #[test]
+    fn reserved_index_names_rejected() {
+        let mut catalog = Catalog::new();
+        catalog.create_table("users", sample_columns()).unwrap();
+        let err = catalog
+            .create_index("users", "_primary", &["id"], IndexKind::BTree)
+            .expect_err("reserved index name rejected");
+        assert!(format!("{err}").contains("reserved"));
+    }
+
+    #[test]
+    fn index_names_unique_across_tables() {
+        let mut catalog = Catalog::new();
+        catalog.create_table("users", sample_columns()).unwrap();
+        catalog.create_table("orders", sample_columns()).unwrap();
+        catalog
+            .create_index("users", "idx_shared", &["id"], IndexKind::BTree)
+            .unwrap();
+        let err = catalog
+            .create_index("orders", "idx_shared", &["id"], IndexKind::Hash)
+            .expect_err("duplicate index name rejected");
+        assert!(format!("{err}").contains("already exists"));
+    }
+
+    #[test]
+    fn index_rejects_duplicate_columns() {
+        let mut catalog = Catalog::new();
+        catalog.create_table("users", sample_columns()).unwrap();
+        let err = catalog
+            .create_index("users", "idx_dup", &["name", "name"], IndexKind::BTree)
+            .expect_err("duplicate column reference rejected");
+        assert!(format!("{err}").contains("multiple times"));
+    }
+
+    #[test]
+    fn bitmap_index_requires_bool_columns() {
+        let mut catalog = Catalog::new();
+        catalog.create_table("users", sample_columns()).unwrap();
+
+        catalog
+            .create_index("users", "idx_active_bitmap", &["active"], IndexKind::Bitmap)
+            .expect("bool column accepted");
+
+        let err = catalog
+            .create_index("users", "idx_name_bitmap", &["name"], IndexKind::Bitmap)
+            .expect_err("non-bool rejected");
+        assert!(format!("{err}").contains("cannot be built"));
+    }
+
+    #[test]
+    fn trie_index_requires_text_columns() {
+        let mut catalog = Catalog::new();
+        catalog.create_table("users", sample_columns()).unwrap();
+
+        catalog
+            .create_index("users", "idx_name_trie", &["name"], IndexKind::Trie)
+            .expect("text column accepted");
+
+        let err = catalog
+            .create_index("users", "idx_age_trie", &["age"], IndexKind::Trie)
+            .expect_err("non-text rejected");
+        assert!(format!("{err}").contains("cannot be built"));
+    }
+
+    #[test]
+    fn table_name_and_summary_helpers() {
+        let mut catalog = Catalog::new();
+        catalog.create_table("users", sample_columns()).unwrap();
+        catalog.create_table("orders", sample_columns()).unwrap();
+        catalog
+            .create_index("users", "idx_users_name", &["name"], IndexKind::BTree)
+            .unwrap();
+        let names = catalog.table_names();
+        assert_eq!(names, vec!["users", "orders"]);
+
+        let summaries = catalog.table_summaries();
+        assert_eq!(summaries.len(), 2);
+        let users_summary = summaries
+            .iter()
+            .find(|s| s.name == "users")
+            .expect("users summary present");
+        assert_eq!(users_summary.index_count, 1);
+        assert_eq!(users_summary.column_count, 4);
     }
 }
