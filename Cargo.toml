@@ -3,15 +3,19 @@ members = [
     "crates/types",
     "crates/common",
     "crates/expr",
+    "crates/parser",
 ]
 
 resolver = "2"
 
 [workspace.dependencies]
 common = { path = "crates/common" }
+expr = { path = "crates/expr" }
 proptest = "1.9.0"
+pretty_assertions = "1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+sqlparser = "0.43"
 tempfile = "3.23.0"
 thiserror = "1.0.69"
 types = { path = "crates/types" }

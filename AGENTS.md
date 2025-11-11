@@ -6,6 +6,12 @@
 - `crates/common/` hosts reusable helpers and error types that other crates can import.
 - Generated artifacts land in `target/`; do not commit its contents.
 
+## Dependency Management
+- Pin every third-party or shared crate version under `[workspace.dependencies]` in the root `Cargo.toml`; child crates must never specify their own versions.
+- Reference those shared dependencies from member crates using `{ workspace = true }`, even for path-only crates such as `common`, `expr`, or `types`.
+- If a crate needs extra features, add them to the workspace definition so all consumers stay aligned.
+- When introducing a new dependency, update the workspace table first, then wire it into the specific crate via `workspace = true`.
+
 ## Build, Test, and Development Commands
 - `cargo check` — fast validation of code and dependency wiring without producing binaries.
 - `cargo test` — executes all unit and property tests across workspace members.
