@@ -45,8 +45,8 @@ impl Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cmp::Ordering::{Equal, Greater, Less};
     use proptest::prelude::*;
+    use std::cmp::Ordering::{Equal, Greater, Less};
 
     #[test]
     fn cmp_same_type_works() {
