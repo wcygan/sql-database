@@ -56,13 +56,19 @@ mod tests {
 
         let catalog = Box::leak(Box::new(catalog));
         let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
-        let wal = Box::leak(Box::new(wal::Wal::open(temp_dir.path().join("test.wal")).unwrap()));
+        let wal = Box::leak(Box::new(
+            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+        ));
 
         let ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
         (ctx, temp_dir)
     }
 
-    fn insert_test_rows(ctx: &mut ExecutionContext, table_id: TableId, rows: Vec<Row>) -> DbResult<()> {
+    fn insert_test_rows(
+        ctx: &mut ExecutionContext,
+        table_id: TableId,
+        rows: Vec<Row>,
+    ) -> DbResult<()> {
         let table_meta = ctx.catalog.table_by_id(table_id)?;
         let file_path = ctx.data_dir.join(format!("{}.heap", table_meta.name));
         let mut heap_table = storage::HeapFile::open(&file_path, table_id.0)?;
@@ -96,8 +102,16 @@ mod tests {
 
         // Insert test data
         let rows = vec![
-            Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]),
-            Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]),
+            Row(vec![
+                Value::Int(1),
+                Value::Text("alice".into()),
+                Value::Bool(true),
+            ]),
+            Row(vec![
+                Value::Int(2),
+                Value::Text("bob".into()),
+                Value::Bool(false),
+            ]),
         ];
         insert_test_rows(&mut ctx, table_id, rows).unwrap();
 
@@ -108,8 +122,18 @@ mod tests {
 
         let results = execute_query(plan, &mut ctx).unwrap();
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].0, vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]);
-        assert_eq!(results[1].0, vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]);
+        assert_eq!(
+            results[0].0,
+            vec![
+                Value::Int(1),
+                Value::Text("alice".into()),
+                Value::Bool(true)
+            ]
+        );
+        assert_eq!(
+            results[1].0,
+            vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]
+        );
     }
 
     #[test]
@@ -119,9 +143,21 @@ mod tests {
 
         // Insert test data
         let rows = vec![
-            Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]),
-            Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]),
-            Row(vec![Value::Int(3), Value::Text("carol".into()), Value::Bool(true)]),
+            Row(vec![
+                Value::Int(1),
+                Value::Text("alice".into()),
+                Value::Bool(true),
+            ]),
+            Row(vec![
+                Value::Int(2),
+                Value::Text("bob".into()),
+                Value::Bool(false),
+            ]),
+            Row(vec![
+                Value::Int(3),
+                Value::Text("carol".into()),
+                Value::Bool(true),
+            ]),
         ];
         insert_test_rows(&mut ctx, table_id, rows).unwrap();
 
@@ -145,9 +181,11 @@ mod tests {
         let table_id = TableId(1);
 
         // Insert test data
-        let rows = vec![
-            Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]),
-        ];
+        let rows = vec![Row(vec![
+            Value::Int(1),
+            Value::Text("alice".into()),
+            Value::Bool(true),
+        ])];
         insert_test_rows(&mut ctx, table_id, rows).unwrap();
 
         let scan = PhysicalPlan::SeqScan {
@@ -172,9 +210,21 @@ mod tests {
 
         // Insert test data
         let rows = vec![
-            Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]),
-            Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]),
-            Row(vec![Value::Int(3), Value::Text("carol".into()), Value::Bool(true)]),
+            Row(vec![
+                Value::Int(1),
+                Value::Text("alice".into()),
+                Value::Bool(true),
+            ]),
+            Row(vec![
+                Value::Int(2),
+                Value::Text("bob".into()),
+                Value::Bool(false),
+            ]),
+            Row(vec![
+                Value::Int(3),
+                Value::Text("carol".into()),
+                Value::Bool(true),
+            ]),
         ];
         insert_test_rows(&mut ctx, table_id, rows).unwrap();
 
@@ -195,8 +245,14 @@ mod tests {
 
         let results = execute_query(plan, &mut ctx).unwrap();
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].0, vec![Value::Int(1), Value::Text("alice".into())]);
-        assert_eq!(results[1].0, vec![Value::Int(3), Value::Text("carol".into())]);
+        assert_eq!(
+            results[0].0,
+            vec![Value::Int(1), Value::Text("alice".into())]
+        );
+        assert_eq!(
+            results[1].0,
+            vec![Value::Int(3), Value::Text("carol".into())]
+        );
     }
 
     // execute_dml tests
@@ -207,7 +263,11 @@ mod tests {
 
         let plan = PhysicalPlan::Insert {
             table_id: TableId(1),
-            values: vec![lit_int(1), lit_text("alice"), ResolvedExpr::Literal(Value::Bool(true))],
+            values: vec![
+                lit_int(1),
+                lit_text("alice"),
+                ResolvedExpr::Literal(Value::Bool(true)),
+            ],
         };
 
         let count = execute_dml(plan, &mut ctx).unwrap();
@@ -221,8 +281,16 @@ mod tests {
 
         // Insert test data
         let rows = vec![
-            Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]),
-            Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]),
+            Row(vec![
+                Value::Int(1),
+                Value::Text("alice".into()),
+                Value::Bool(true),
+            ]),
+            Row(vec![
+                Value::Int(2),
+                Value::Text("bob".into()),
+                Value::Bool(false),
+            ]),
         ];
         insert_test_rows(&mut ctx, table_id, rows).unwrap();
 
@@ -243,9 +311,21 @@ mod tests {
 
         // Insert test data
         let rows = vec![
-            Row(vec![Value::Int(1), Value::Text("alice".into()), Value::Bool(true)]),
-            Row(vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]),
-            Row(vec![Value::Int(3), Value::Text("carol".into()), Value::Bool(true)]),
+            Row(vec![
+                Value::Int(1),
+                Value::Text("alice".into()),
+                Value::Bool(true),
+            ]),
+            Row(vec![
+                Value::Int(2),
+                Value::Text("bob".into()),
+                Value::Bool(false),
+            ]),
+            Row(vec![
+                Value::Int(3),
+                Value::Text("carol".into()),
+                Value::Bool(true),
+            ]),
         ];
         insert_test_rows(&mut ctx, table_id, rows).unwrap();
 
@@ -264,7 +344,7 @@ mod tests {
 
         // Create a plan that would return non-integer (this is contrived)
         // In practice, DML operators always return Int, but we test the error path
-        let scan = PhysicalPlan::SeqScan {
+        let _scan = PhysicalPlan::SeqScan {
             table_id: TableId(1),
             schema: vec![],
         };
@@ -449,7 +529,7 @@ pub fn execute_dml(plan: PhysicalPlan, ctx: &mut ExecutionContext) -> DbResult<u
     executor.close(ctx)?;
 
     // DML operators return single row with affected count
-    match result.0.get(0) {
+    match result.0.first() {
         Some(types::Value::Int(count)) => Ok(*count as u64),
         Some(other) => Err(DbError::Executor(format!(
             "DML result count must be integer, got {:?}",

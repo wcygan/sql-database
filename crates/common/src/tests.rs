@@ -27,7 +27,7 @@ fn recordbatch_consistency() {
 
 #[test]
 fn io_error_converts() {
-    let e = io::Error::new(io::ErrorKind::Other, "oops");
+    let e = io::Error::other("oops");
     let db_err: DbError = e.into();
     assert!(matches!(db_err, DbError::Io(_)));
 }

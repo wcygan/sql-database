@@ -93,8 +93,20 @@ pub struct UpdateExec {
     executed: bool,
 }
 
+#[bon::bon]
 impl UpdateExec {
-    /// Create a new update operator.
+    /// Create a new update operator using a builder pattern.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let update = UpdateExec::builder()
+    ///     .table_id(TableId(1))
+    ///     .schema(vec!["id".into(), "name".into()])
+    ///     .input(scan_exec)
+    ///     .assignments(vec![(1, ResolvedExpr::Literal(Value::Text("updated".into())))])
+    ///     .build();
+    /// ```
+    #[builder]
     pub fn new(
         table_id: TableId,
         schema: Vec<String>,
@@ -266,7 +278,9 @@ mod tests {
         // Leak resources for 'static lifetime (test-only pattern)
         let catalog = Box::leak(Box::new(catalog));
         let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
-        let wal = Box::leak(Box::new(wal::Wal::open(temp_dir.path().join("test.wal")).unwrap()));
+        let wal = Box::leak(Box::new(
+            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+        ));
 
         let ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
         (ctx, temp_dir)
@@ -279,7 +293,11 @@ mod tests {
         let (mut ctx, _temp) = setup_context();
         let table_id = TableId(1);
 
-        let values = vec![lit_int(1), lit_text("alice"), ResolvedExpr::Literal(Value::Bool(true))];
+        let values = vec![
+            lit_int(1),
+            lit_text("alice"),
+            ResolvedExpr::Literal(Value::Bool(true)),
+        ];
         let mut insert = InsertExec::new(table_id, vec![], values);
 
         insert.open(&mut ctx).unwrap();
@@ -416,7 +434,12 @@ mod tests {
         let input = Box::new(MockExecutor::new(vec![], vec![]));
         let assignments = vec![(0, lit_int(100))];
 
-        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+        let mut update = UpdateExec::builder()
+            .table_id(table_id)
+            .schema(vec![])
+            .input(input)
+            .assignments(assignments)
+            .build();
 
         update.open(&mut ctx).unwrap();
         assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(0)]));
@@ -434,7 +457,12 @@ mod tests {
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
         let assignments = vec![(0, lit_int(100))];
 
-        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+        let mut update = UpdateExec::builder()
+            .table_id(table_id)
+            .schema(vec![])
+            .input(input)
+            .assignments(assignments)
+            .build();
 
         update.open(&mut ctx).unwrap();
         assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(1)]));
@@ -456,7 +484,12 @@ mod tests {
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
         let assignments = vec![(1, lit_text("updated"))];
 
-        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+        let mut update = UpdateExec::builder()
+            .table_id(table_id)
+            .schema(vec![])
+            .input(input)
+            .assignments(assignments)
+            .build();
 
         update.open(&mut ctx).unwrap();
         assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(3)]));
@@ -474,7 +507,12 @@ mod tests {
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
         let assignments = vec![(0, lit_int(100)), (1, lit_text("updated"))];
 
-        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+        let mut update = UpdateExec::builder()
+            .table_id(table_id)
+            .schema(vec![])
+            .input(input)
+            .assignments(assignments)
+            .build();
 
         update.open(&mut ctx).unwrap();
         assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(1)]));
@@ -491,7 +529,12 @@ mod tests {
         let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
         let assignments = vec![(5, lit_int(100))]; // Column 5 doesn't exist
 
-        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+        let mut update = UpdateExec::builder()
+            .table_id(table_id)
+            .schema(vec![])
+            .input(input)
+            .assignments(assignments)
+            .build();
 
         update.open(&mut ctx).unwrap();
         assert_error_contains(update.next(&mut ctx), "out of bounds");
@@ -506,7 +549,12 @@ mod tests {
         let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
         let assignments = vec![(0, lit_int(100))];
 
-        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+        let mut update = UpdateExec::builder()
+            .table_id(table_id)
+            .schema(vec![])
+            .input(input)
+            .assignments(assignments)
+            .build();
 
         update.open(&mut ctx).unwrap();
         assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(1)]));
@@ -525,7 +573,12 @@ mod tests {
         let input = Box::new(MockExecutor::new(rows.clone(), vec!["id".into()]));
         let assignments = vec![(0, lit_int(100))];
 
-        let mut update = UpdateExec::new(table_id, vec![], input, assignments);
+        let mut update = UpdateExec::builder()
+            .table_id(table_id)
+            .schema(vec![])
+            .input(input)
+            .assignments(assignments)
+            .build();
 
         update.open(&mut ctx).unwrap();
         assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(1)]));
@@ -541,7 +594,12 @@ mod tests {
     fn update_schema_empty() {
         let table_id = TableId(1);
         let input = Box::new(MockExecutor::new(vec![], vec![]));
-        let update = UpdateExec::new(table_id, vec![], input, vec![]);
+        let update = UpdateExec::builder()
+            .table_id(table_id)
+            .schema(vec![])
+            .input(input)
+            .assignments(vec![])
+            .build();
 
         assert_eq!(update.schema().len(), 0);
     }
@@ -552,7 +610,12 @@ mod tests {
         let table_id = TableId(1);
 
         let input = Box::new(MockExecutor::new(vec![], vec![]));
-        let mut update = UpdateExec::new(table_id, vec![], input, vec![]);
+        let mut update = UpdateExec::builder()
+            .table_id(table_id)
+            .schema(vec![])
+            .input(input)
+            .assignments(vec![])
+            .build();
 
         assert!(update.open(&mut ctx).is_ok());
     }
@@ -563,7 +626,12 @@ mod tests {
         let table_id = TableId(1);
 
         let input = Box::new(MockExecutor::new(vec![], vec![]));
-        let mut update = UpdateExec::new(table_id, vec![], input, vec![]);
+        let mut update = UpdateExec::builder()
+            .table_id(table_id)
+            .schema(vec![])
+            .input(input)
+            .assignments(vec![])
+            .build();
 
         update.open(&mut ctx).unwrap();
         assert!(update.close(&mut ctx).is_ok());
@@ -577,7 +645,12 @@ mod tests {
         let input = Box::new(MockExecutor::with_next_error(common::DbError::Executor(
             "test error".into(),
         )));
-        let mut update = UpdateExec::new(table_id, vec![], input, vec![(0, lit_int(1))]);
+        let mut update = UpdateExec::builder()
+            .table_id(table_id)
+            .schema(vec![])
+            .input(input)
+            .assignments(vec![(0, lit_int(1))])
+            .build();
 
         update.open(&mut ctx).unwrap();
         assert_error_contains(update.next(&mut ctx), "test error");

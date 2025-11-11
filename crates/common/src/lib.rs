@@ -90,15 +90,32 @@ pub enum DbError {
 pub type DbResult<T> = Result<T, DbError>;
 
 /// Runtime configuration for the database components.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// # Example
+/// ```
+/// use common::Config;
+/// use std::path::PathBuf;
+///
+/// let config = Config::builder()
+///     .data_dir(PathBuf::from("./my_db"))
+///     .page_size(8192)
+///     .buffer_pool_pages(512)
+///     .wal_enabled(true)
+///     .build();
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize, bon::Builder)]
 pub struct Config {
     /// Directory where table data, catalog metadata, and WAL files live.
+    #[builder(default = PathBuf::from("./db_data"))]
     pub data_dir: PathBuf,
     /// Fixed-size page allocation in bytes.
+    #[builder(default = 4096)]
     pub page_size: usize,
     /// Number of pages the buffer pool keeps resident.
+    #[builder(default = 256)]
     pub buffer_pool_pages: usize,
     /// Controls whether the write-ahead log is enabled.
+    #[builder(default = true)]
     pub wal_enabled: bool,
 }
 

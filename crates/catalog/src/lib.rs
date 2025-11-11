@@ -34,6 +34,7 @@ pub struct Catalog {
 const RESERVED_TABLE_NAMES: &[&str] = &["_catalog", "sqlite_master"];
 const RESERVED_INDEX_NAMES: &[&str] = &["_primary"];
 
+#[bon::bon]
 impl Catalog {
     /// Create an empty catalog.
     pub fn new() -> Self {
@@ -121,6 +122,17 @@ impl Catalog {
     }
 
     /// Create an index over the given table columns, returning its identifier.
+    ///
+    /// # Example
+    /// ```ignore
+    /// catalog.create_index()
+    ///     .table_name("users")
+    ///     .index_name("idx_users_email")
+    ///     .columns(&["email"])
+    ///     .kind(IndexKind::BTree)
+    ///     .call()?;
+    /// ```
+    #[builder]
     pub fn create_index(
         &mut self,
         table_name: &str,
@@ -597,7 +609,12 @@ mod tests {
         catalog.create_table("users", sample_columns()).unwrap();
 
         let index_id = catalog
-            .create_index("users", "idx_users_name", &["name"], IndexKind::BTree)
+            .create_index()
+            .table_name("users")
+            .index_name("idx_users_name")
+            .columns(&["name"])
+            .kind(IndexKind::BTree)
+            .call()
             .unwrap();
         assert_eq!(index_id, IndexId(1));
 
@@ -617,7 +634,12 @@ mod tests {
         catalog.create_table("users", sample_columns()).unwrap();
 
         let err = catalog
-            .create_index("users", "idx_missing", &["missing"], IndexKind::Hash)
+            .create_index()
+            .table_name("users")
+            .index_name("idx_missing")
+            .columns(&["missing"])
+            .kind(IndexKind::Hash)
+            .call()
             .unwrap_err();
         assert!(format!("{err}").contains("unknown column"));
     }
@@ -627,7 +649,12 @@ mod tests {
         let mut catalog = Catalog::new();
         catalog.create_table("users", sample_columns()).unwrap();
         catalog
-            .create_index("users", "idx_users_name", &["name"], IndexKind::Hash)
+            .create_index()
+            .table_name("users")
+            .index_name("idx_users_name")
+            .columns(&["name"])
+            .kind(IndexKind::Hash)
+            .call()
             .unwrap();
 
         let dir = tempdir().unwrap();
@@ -646,7 +673,12 @@ mod tests {
         let mut catalog = Catalog::new();
         catalog.create_table("users", sample_columns()).unwrap();
         catalog
-            .create_index("users", "idx_users_name", &["name"], IndexKind::Hash)
+            .create_index()
+            .table_name("users")
+            .index_name("idx_users_name")
+            .columns(&["name"])
+            .kind(IndexKind::Hash)
+            .call()
             .unwrap();
 
         catalog.drop_table("users").unwrap();
@@ -672,7 +704,12 @@ mod tests {
         let mut catalog = Catalog::new();
         catalog.create_table("users", sample_columns()).unwrap();
         let err = catalog
-            .create_index("users", "_primary", &["id"], IndexKind::BTree)
+            .create_index()
+            .table_name("users")
+            .index_name("_primary")
+            .columns(&["id"])
+            .kind(IndexKind::BTree)
+            .call()
             .expect_err("reserved index name rejected");
         assert!(format!("{err}").contains("reserved"));
     }
@@ -698,7 +735,12 @@ mod tests {
         catalog.create_table("users", sample_columns()).unwrap();
 
         let err = catalog
-            .create_index("users", "idx_empty", &[], IndexKind::Hash)
+            .create_index()
+            .table_name("users")
+            .index_name("idx_empty")
+            .columns(&[])
+            .kind(IndexKind::Hash)
+            .call()
             .unwrap_err();
         assert_eq!(
             format!("{err}"),
@@ -712,10 +754,20 @@ mod tests {
         catalog.create_table("users", sample_columns()).unwrap();
         catalog.create_table("orders", sample_columns()).unwrap();
         catalog
-            .create_index("users", "idx_shared", &["id"], IndexKind::BTree)
+            .create_index()
+            .table_name("users")
+            .index_name("idx_shared")
+            .columns(&["id"])
+            .kind(IndexKind::BTree)
+            .call()
             .unwrap();
         let err = catalog
-            .create_index("orders", "idx_shared", &["id"], IndexKind::Hash)
+            .create_index()
+            .table_name("orders")
+            .index_name("idx_shared")
+            .columns(&["id"])
+            .kind(IndexKind::Hash)
+            .call()
             .expect_err("duplicate index name rejected");
         assert!(format!("{err}").contains("already exists"));
     }
@@ -725,7 +777,12 @@ mod tests {
         let mut catalog = Catalog::new();
         catalog.create_table("users", sample_columns()).unwrap();
         let err = catalog
-            .create_index("users", "idx_dup", &["name", "name"], IndexKind::BTree)
+            .create_index()
+            .table_name("users")
+            .index_name("idx_dup")
+            .columns(&["name", "name"])
+            .kind(IndexKind::BTree)
+            .call()
             .expect_err("duplicate column reference rejected");
         assert!(format!("{err}").contains("multiple times"));
     }
@@ -736,11 +793,21 @@ mod tests {
         catalog.create_table("users", sample_columns()).unwrap();
 
         catalog
-            .create_index("users", "idx_active_bitmap", &["active"], IndexKind::Bitmap)
+            .create_index()
+            .table_name("users")
+            .index_name("idx_active_bitmap")
+            .columns(&["active"])
+            .kind(IndexKind::Bitmap)
+            .call()
             .expect("bool column accepted");
 
         let err = catalog
-            .create_index("users", "idx_name_bitmap", &["name"], IndexKind::Bitmap)
+            .create_index()
+            .table_name("users")
+            .index_name("idx_name_bitmap")
+            .columns(&["name"])
+            .kind(IndexKind::Bitmap)
+            .call()
             .expect_err("non-bool rejected");
         assert!(format!("{err}").contains("cannot be built"));
     }
@@ -751,11 +818,21 @@ mod tests {
         catalog.create_table("users", sample_columns()).unwrap();
 
         catalog
-            .create_index("users", "idx_name_trie", &["name"], IndexKind::Trie)
+            .create_index()
+            .table_name("users")
+            .index_name("idx_name_trie")
+            .columns(&["name"])
+            .kind(IndexKind::Trie)
+            .call()
             .expect("text column accepted");
 
         let err = catalog
-            .create_index("users", "idx_age_trie", &["age"], IndexKind::Trie)
+            .create_index()
+            .table_name("users")
+            .index_name("idx_age_trie")
+            .columns(&["age"])
+            .kind(IndexKind::Trie)
+            .call()
             .expect_err("non-text rejected");
         assert!(format!("{err}").contains("cannot be built"));
     }
@@ -766,7 +843,12 @@ mod tests {
         catalog.create_table("users", sample_columns()).unwrap();
         catalog.create_table("orders", sample_columns()).unwrap();
         catalog
-            .create_index("users", "idx_users_name", &["name"], IndexKind::BTree)
+            .create_index()
+            .table_name("users")
+            .index_name("idx_users_name")
+            .columns(&["name"])
+            .kind(IndexKind::BTree)
+            .call()
             .unwrap();
         let names = catalog.table_names();
         assert_eq!(names, vec!["users", "orders"]);

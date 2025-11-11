@@ -18,10 +18,20 @@ fn sample_catalog() -> Catalog {
         )
         .unwrap();
     catalog
-        .create_index("users", "idx_users_id", &["id"], IndexKind::BTree)
+        .create_index()
+        .table_name("users")
+        .index_name("idx_users_id")
+        .columns(&["id"])
+        .kind(IndexKind::BTree)
+        .call()
         .unwrap();
     catalog
-        .create_index("users", "idx_users_age", &["age"], IndexKind::BTree)
+        .create_index()
+        .table_name("users")
+        .index_name("idx_users_age")
+        .columns(&["age"])
+        .kind(IndexKind::BTree)
+        .call()
         .unwrap();
     catalog
 }
@@ -472,10 +482,20 @@ fn multiple_indexes_on_same_column_prefers_first() {
 
     // Create two BTree indexes on same column - should use first found
     catalog
-        .create_index("products", "idx_price_1", &["price"], IndexKind::BTree)
+        .create_index()
+        .table_name("products")
+        .index_name("idx_price_1")
+        .columns(&["price"])
+        .kind(IndexKind::BTree)
+        .call()
         .unwrap();
     catalog
-        .create_index("products", "idx_price_2", &["price"], IndexKind::BTree)
+        .create_index()
+        .table_name("products")
+        .index_name("idx_price_2")
+        .columns(&["price"])
+        .kind(IndexKind::BTree)
+        .call()
         .unwrap();
 
     let mut ctx = PlanningContext::new(&catalog);

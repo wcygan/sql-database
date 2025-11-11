@@ -25,12 +25,35 @@
 - Prefer expressive enum/struct names tied to database concepts; avoid abbreviations unless ubiquitous (e.g., `sql`).
 - Keep shared dependency versions pinned via `[workspace.dependencies]`; reference them with `workspace = true`.
 
+## Builder Pattern with Bon
+- Use the `bon` crate (version 3) for ergonomic compile-time-checked builders on constructors with 4+ parameters.
+- Apply `#[bon::bon]` to impl blocks and `#[builder]` to methods that should have builder APIs.
+- Prefer builders for: multi-parameter constructors, public configuration structs, complex operator initialization.
+- Pattern: `#[bon::bon] impl MyStruct { #[builder] pub fn new(...) -> Self { ... } }`
+- Usage: `MyStruct::builder().field1(val1).field2(val2).build()`
+- Benefits: compile-time validation, named parameters, any-order initialization, zero runtime cost.
+- Examples: `IndexScanExec::builder()` (crates/executor/src/scan.rs), `Config` struct (future: crates/common/src/lib.rs).
+
 ## Testing Guidelines
 - Unit tests live alongside implementation files using the `mod tests` pattern.
 - Property-based tests in `crates/types` leverage `proptest`; name them `prop_*` for clarity.
 - Add targeted integration tests in `tests/` directories when behavior spans crates.
 - Run `cargo test` locally before opening a PR; include failing-seed reproduction steps if a proptest fails.
 - When you need executable documentation for test coverage, run `scripts/coverage.sh`; it runs the entire workspace with coverage instrumentation and leaves reports under `target/llvm-cov/`.
+
+## Clippy Lint Standards
+- All code must pass `cargo clippy --all-targets --all-features` with zero warnings before merging.
+- Address clippy suggestions by fixing the underlying issue, not by suppressing warnings unless absolutely necessary.
+- Common fixes:
+  - Use `io::Error::other()` instead of `io::Error::new(ErrorKind::Other, _)`
+  - Use `.first()` instead of `.get(0)`
+  - Use array literals `[x; n]` instead of `vec![x; n]` for compile-time constant arrays
+  - Use iterator methods (`.iter().enumerate()`) instead of indexing loops when appropriate
+  - Add `.truncate(true/false)` when using `.create(true)` in OpenOptions to make intent explicit
+  - Remove unused imports and variables, or prefix with `_` if intentionally unused
+- For test helpers that will be used in future tests, use `#[allow(dead_code)]` with a comment explaining why.
+- Run clippy after every significant change; don't batch up lint fixes—address them immediately.
+- If clippy suggests a change that would reduce code clarity, discuss in PR review rather than suppressing.
 
 ## Commit & Pull Request Guidelines
 - Write commits in the imperative mood, e.g., `Pin workspace dependencies` or `Add row serialization tests`.

@@ -2,7 +2,7 @@
 
 use crate::{ExecutionContext, Executor};
 use catalog::{Catalog, Column};
-use common::{ColumnId, DbError, DbResult, Row, TableId};
+use common::{ColumnId, DbError, DbResult, Row};
 use expr::{BinaryOp, UnaryOp};
 use planner::ResolvedExpr;
 use std::collections::VecDeque;
@@ -49,6 +49,7 @@ impl MockExecutor {
     }
 
     /// Create a mock executor that returns an error on open().
+    #[allow(dead_code)]
     pub fn with_open_error(error: DbError) -> Self {
         Self {
             rows: VecDeque::new(),
@@ -62,6 +63,7 @@ impl MockExecutor {
     }
 
     /// Create a mock executor that returns an error on close().
+    #[allow(dead_code)]
     pub fn with_close_error(error: DbError) -> Self {
         Self {
             rows: VecDeque::new(),
@@ -75,11 +77,13 @@ impl MockExecutor {
     }
 
     /// Check if open() was called.
+    #[allow(dead_code)]
     pub fn was_opened(&self) -> bool {
         self.open_called
     }
 
     /// Check if close() was called.
+    #[allow(dead_code)]
     pub fn was_closed(&self) -> bool {
         self.close_called
     }
@@ -140,18 +144,17 @@ pub fn int_row(values: &[i64]) -> Row {
 
 /// Create a row with text values.
 pub fn text_row(values: &[&str]) -> Row {
-    Row(values
-        .iter()
-        .map(|&v| Value::Text(v.to_string()))
-        .collect())
+    Row(values.iter().map(|&v| Value::Text(v.to_string())).collect())
 }
 
 /// Create a row with boolean values.
+#[allow(dead_code)]
 pub fn bool_row(values: &[bool]) -> Row {
     Row(values.iter().map(|&v| Value::Bool(v)).collect())
 }
 
 /// Create a row with mixed values.
+#[allow(dead_code)]
 pub fn make_row(values: Vec<Value>) -> Row {
     Row(values)
 }
@@ -159,6 +162,7 @@ pub fn make_row(values: Vec<Value>) -> Row {
 // Expression builders
 
 /// Create a literal expression.
+#[allow(dead_code)]
 pub fn lit(value: Value) -> ResolvedExpr {
     ResolvedExpr::Literal(value)
 }
@@ -208,11 +212,7 @@ pub fn unary(op: UnaryOp, expr: ResolvedExpr) -> ResolvedExpr {
 // Assertion helpers
 
 /// Assert that next() returns the expected row.
-pub fn assert_next_row(
-    exec: &mut dyn Executor,
-    ctx: &mut ExecutionContext,
-    expected: Row,
-) {
+pub fn assert_next_row(exec: &mut dyn Executor, ctx: &mut ExecutionContext, expected: Row) {
     match exec.next(ctx) {
         Ok(Some(row)) => assert_eq!(row.0, expected.0, "row mismatch"),
         Ok(None) => panic!("expected row, got None"),
@@ -232,7 +232,10 @@ pub fn assert_exhausted(exec: &mut dyn Executor, ctx: &mut ExecutionContext) {
 /// Assert that a result is an error containing the expected message.
 pub fn assert_error_contains<T: std::fmt::Debug>(result: DbResult<T>, expected_msg: &str) {
     match result {
-        Ok(val) => panic!("expected error containing '{}', got Ok({:?})", expected_msg, val),
+        Ok(val) => panic!(
+            "expected error containing '{}', got Ok({:?})",
+            expected_msg, val
+        ),
         Err(e) => {
             let error_str = format!("{}", e);
             assert!(
@@ -246,6 +249,7 @@ pub fn assert_error_contains<T: std::fmt::Debug>(result: DbResult<T>, expected_m
 }
 
 /// Assert that a result is a specific error variant.
+#[allow(dead_code)]
 pub fn assert_executor_error<T: std::fmt::Debug>(result: DbResult<T>) {
     match result {
         Ok(val) => panic!("expected Executor error, got Ok({:?})", val),

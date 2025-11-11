@@ -28,9 +28,14 @@ pub fn build_executor(plan: PhysicalPlan) -> DbResult<Box<dyn Executor>> {
             index_name,
             predicate,
             schema,
-        } => Ok(Box::new(IndexScanExec::new(
-            table_id, index_name, predicate, schema,
-        ))),
+        } => Ok(Box::new(
+            IndexScanExec::builder()
+                .table_id(table_id)
+                .index_name(index_name)
+                .predicate(predicate)
+                .schema(schema)
+                .build(),
+        )),
 
         PhysicalPlan::Filter { input, predicate } => {
             let child = build_executor(*input)?;
@@ -62,12 +67,14 @@ pub fn build_executor(plan: PhysicalPlan) -> DbResult<Box<dyn Executor>> {
             }
 
             let schema = vec![];
-            Ok(Box::new(UpdateExec::new(
-                table_id,
-                schema,
-                input,
-                assignments,
-            )))
+            Ok(Box::new(
+                UpdateExec::builder()
+                    .table_id(table_id)
+                    .schema(schema)
+                    .input(input)
+                    .assignments(assignments)
+                    .build(),
+            ))
         }
 
         PhysicalPlan::Delete {
@@ -210,10 +217,7 @@ mod tests {
 
         let plan = PhysicalPlan::Project {
             input: Box::new(input),
-            columns: vec![
-                ("name".to_string(), 1),
-                ("id".to_string(), 0),
-            ],
+            columns: vec![("name".to_string(), 1), ("id".to_string(), 0)],
         };
 
         let executor = build_executor(plan);

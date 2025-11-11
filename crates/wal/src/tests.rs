@@ -565,7 +565,7 @@ fn corrupted_record_data() {
         let len = 100u32;
         file.write_all(&len.to_le_bytes()).unwrap();
         // Write random garbage that can't deserialize
-        file.write_all(&vec![0xFF; 100]).unwrap();
+        file.write_all(&[0xFF; 100]).unwrap();
     }
 
     // Should fail to deserialize
@@ -614,7 +614,7 @@ fn unicode_and_special_characters() {
 
     let mut wal = Wal::open(&file).unwrap();
 
-    let test_strings = vec![
+    let test_strings = [
         "Hello, 世界!",          // Chinese
         "Привет мир",            // Russian
         "مرحبا بالعالم",         // Arabic
@@ -886,8 +886,8 @@ fn interleaved_record_types() {
     assert_eq!(replayed.len(), 100);
 
     // Verify order is preserved
-    for i in 0..100 {
-        match (i % 5, &replayed[i]) {
+    for (i, record) in replayed.iter().enumerate().take(100) {
+        match (i % 5, record) {
             (0, WalRecord::Insert { .. }) => {}
             (1, WalRecord::Update { .. }) => {}
             (2, WalRecord::Delete { .. }) => {}
