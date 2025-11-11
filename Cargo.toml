@@ -1,7 +1,7 @@
 [workspace]
-members = ["crates/common",
+members = [
     "crates/types",
+    "crates/common",
 ]
 
-# optional, but recommended for reproducible builds
 resolver = "2"
