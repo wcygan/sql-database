@@ -86,6 +86,9 @@ impl Executor for InsertExec {
         };
         ctx.log_dml(wal_record)?;
 
+        // 5. Save PK index to disk
+        ctx.save_pk_index(self.table_id)?;
+
         // Return single row with affected count
         Ok(Some(Row::new(vec![Value::Int(1)])))
     }
@@ -309,6 +312,9 @@ impl Executor for DeleteExec {
         }
 
         self.executed = true;
+
+        // Save PK index to disk after deletions
+        ctx.save_pk_index(self.table_id)?;
 
         // Return count of matched rows
         Ok(Some(Row::new(vec![Value::Int(count)])))

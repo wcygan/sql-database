@@ -1,21 +1,24 @@
 //! In-memory primary key index for enforcing uniqueness constraints.
 //!
-//! The `PrimaryKeyIndex` maintains a HashMap from primary key values to RecordIds,
-//! enabling O(1) duplicate detection during INSERT operations. The index is built
+//! The `PrimaryKeyIndex` maintains a BTreeMap from primary key values to RecordIds,
+//! enabling efficient duplicate detection during INSERT operations. The index is built
 //! lazily when a table is first accessed by scanning existing rows from storage.
 
 use common::{ColumnId, DbError, DbResult, RecordId, Row};
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::Path;
 use types::Value;
 
 /// In-memory index tracking primary key → RecordId mappings for uniqueness enforcement.
 ///
 /// # Design
 ///
-/// - Single-column PK: HashMap key is `vec![Value::Int(42)]`
-/// - Composite PK: HashMap key is `vec![Value::Int(1), Value::Text("foo")]`
-/// - Built on first table access by scanning heap file
-/// - Updated on every INSERT/DELETE
+/// - Single-column PK: BTreeMap key is `vec![Value::Int(42)]`
+/// - Composite PK: BTreeMap key is `vec![Value::Int(1), Value::Text("foo")]`
+/// - Built on first table access by scanning heap file or loading from `.pk_idx` file
+/// - Updated on every INSERT/DELETE and persisted to disk
 ///
 /// # Example
 ///
@@ -23,13 +26,14 @@ use types::Value;
 /// let mut index = PrimaryKeyIndex::new(vec![0]); // PRIMARY KEY (id)
 /// index.insert(vec![Value::Int(1)], RecordId { page_id: PageId(0), slot: 0 })?;
 /// assert!(index.contains(&vec![Value::Int(1)]));
+/// index.save_to_file(Path::new("table.pk_idx"))?;
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PrimaryKeyIndex {
     /// Column ordinals that comprise the primary key (in order)
     pk_columns: Vec<ColumnId>,
     /// Map from PK value tuple to RecordId
-    index: HashMap<Vec<Value>, RecordId>,
+    index: BTreeMap<Vec<Value>, RecordId>,
 }
 
 impl PrimaryKeyIndex {
@@ -37,7 +41,7 @@ impl PrimaryKeyIndex {
     pub fn new(pk_columns: Vec<ColumnId>) -> Self {
         Self {
             pk_columns,
-            index: HashMap::new(),
+            index: BTreeMap::new(),
         }
     }
 
@@ -102,6 +106,43 @@ impl PrimaryKeyIndex {
     /// Check if the index is empty.
     pub fn is_empty(&self) -> bool {
         self.index.is_empty()
+    }
+
+    /// Get the primary key column ordinals.
+    pub fn pk_columns(&self) -> &[ColumnId] {
+        &self.pk_columns
+    }
+
+    /// Save the index to a file using bincode serialization.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError::Storage` if serialization or file I/O fails.
+    pub fn save_to_file(&self, path: &Path) -> DbResult<()> {
+        let config = bincode::config::legacy();
+        let bytes = bincode::serde::encode_to_vec(self, config)
+            .map_err(|e| DbError::Storage(format!("Failed to serialize PK index: {}", e)))?;
+
+        fs::write(path, bytes)
+            .map_err(|e| DbError::Storage(format!("Failed to write PK index file: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Load the index from a file using bincode deserialization.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError::Storage` if file I/O or deserialization fails.
+    pub fn load_from_file(path: &Path) -> DbResult<Self> {
+        let bytes = fs::read(path)
+            .map_err(|e| DbError::Storage(format!("Failed to read PK index file: {}", e)))?;
+
+        let config = bincode::config::legacy();
+        let (index, _len) = bincode::serde::decode_from_slice(&bytes, config)
+            .map_err(|e| DbError::Storage(format!("Failed to deserialize PK index: {}", e)))?;
+
+        Ok(index)
     }
 }
 
@@ -223,5 +264,127 @@ mod tests {
         // But duplicate of key1 should fail
         let result = index.insert(key1, rid);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn serialize_empty_index() {
+        use tempfile::NamedTempFile;
+
+        let index = PrimaryKeyIndex::new(vec![0]);
+        let temp_file = NamedTempFile::new().unwrap();
+
+        // Save empty index
+        index.save_to_file(temp_file.path()).unwrap();
+
+        // Load and verify
+        let loaded = PrimaryKeyIndex::load_from_file(temp_file.path()).unwrap();
+        assert!(loaded.is_empty());
+        assert_eq!(loaded.pk_columns(), &[0]);
+    }
+
+    #[test]
+    fn serialize_single_key() {
+        use tempfile::NamedTempFile;
+
+        let mut index = PrimaryKeyIndex::new(vec![0]);
+        let key = vec![Value::Int(42)];
+        let rid = RecordId {
+            page_id: PageId(5),
+            slot: 3,
+        };
+
+        index.insert(key.clone(), rid).unwrap();
+
+        let temp_file = NamedTempFile::new().unwrap();
+        index.save_to_file(temp_file.path()).unwrap();
+
+        // Load and verify
+        let loaded = PrimaryKeyIndex::load_from_file(temp_file.path()).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert!(loaded.contains(&key));
+        assert_eq!(loaded.pk_columns(), &[0]);
+    }
+
+    #[test]
+    fn serialize_composite_keys() {
+        use tempfile::NamedTempFile;
+
+        let mut index = PrimaryKeyIndex::new(vec![1, 0]);
+        let key1 = vec![Value::Text("alice".into()), Value::Int(1)];
+        let key2 = vec![Value::Text("bob".into()), Value::Int(2)];
+        let rid1 = RecordId {
+            page_id: PageId(0),
+            slot: 0,
+        };
+        let rid2 = RecordId {
+            page_id: PageId(0),
+            slot: 1,
+        };
+
+        index.insert(key1.clone(), rid1).unwrap();
+        index.insert(key2.clone(), rid2).unwrap();
+
+        let temp_file = NamedTempFile::new().unwrap();
+        index.save_to_file(temp_file.path()).unwrap();
+
+        // Load and verify
+        let loaded = PrimaryKeyIndex::load_from_file(temp_file.path()).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert!(loaded.contains(&key1));
+        assert!(loaded.contains(&key2));
+        assert_eq!(loaded.pk_columns(), &[1, 0]);
+    }
+
+    #[test]
+    fn load_from_missing_file_errors() {
+        use std::path::Path;
+
+        let result = PrimaryKeyIndex::load_from_file(Path::new("/nonexistent/path.pk_idx"));
+        assert!(result.is_err());
+        assert!(format!("{:?}", result).contains("Failed to read PK index file"));
+    }
+
+    #[test]
+    fn load_from_corrupt_file_errors() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        // Write garbage data
+        temp_file.write_all(b"invalid bincode data").unwrap();
+
+        let result = PrimaryKeyIndex::load_from_file(temp_file.path());
+        assert!(result.is_err());
+        assert!(format!("{:?}", result).contains("Failed to deserialize PK index"));
+    }
+
+    #[test]
+    fn round_trip_preserves_all_entries() {
+        use tempfile::NamedTempFile;
+
+        let mut index = PrimaryKeyIndex::new(vec![0]);
+
+        // Insert 100 entries
+        for i in 0..100 {
+            let key = vec![Value::Int(i)];
+            let rid = RecordId {
+                page_id: PageId((i / 10) as u64),
+                slot: (i % 10) as u16,
+            };
+            index.insert(key, rid).unwrap();
+        }
+        assert_eq!(index.len(), 100);
+
+        // Save and load
+        let temp_file = NamedTempFile::new().unwrap();
+        index.save_to_file(temp_file.path()).unwrap();
+        let loaded = PrimaryKeyIndex::load_from_file(temp_file.path()).unwrap();
+
+        // Verify all entries preserved
+        assert_eq!(loaded.len(), 100);
+        for i in 0..100 {
+            let key = vec![Value::Int(i)];
+            assert!(loaded.contains(&key));
+        }
     }
 }

@@ -15,6 +15,35 @@ pub enum Value {
     Null,
 }
 
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Value {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Define a total ordering for all values:
+        // Null < Bool < Int < Text
+        // Within each type, use natural ordering
+        match (self, other) {
+            (Value::Null, Value::Null) => Ordering::Equal,
+            (Value::Null, _) => Ordering::Less,
+            (_, Value::Null) => Ordering::Greater,
+
+            (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+            (Value::Bool(_), Value::Int(_) | Value::Text(_)) => Ordering::Less,
+            (Value::Int(_) | Value::Text(_), Value::Bool(_)) => Ordering::Greater,
+
+            (Value::Int(a), Value::Int(b)) => a.cmp(b),
+            (Value::Int(_), Value::Text(_)) => Ordering::Less,
+            (Value::Text(_), Value::Int(_)) => Ordering::Greater,
+
+            (Value::Text(a), Value::Text(b)) => a.cmp(b),
+        }
+    }
+}
+
 impl Value {
     pub fn as_bool(&self) -> Option<bool> {
         match self {
@@ -119,6 +148,27 @@ mod tests {
         assert_eq!(a.cmp_same_type(&b), Some(Less));
         assert_eq!(b.cmp_same_type(&a), Some(Greater));
         assert_eq!(a.cmp_same_type(&c), Some(Equal));
+    }
+
+    #[test]
+    fn ord_impl_provides_total_ordering() {
+        // Null is smallest
+        assert!(Value::Null < Value::Bool(false));
+        assert!(Value::Null < Value::Int(0));
+        assert!(Value::Null < Value::Text("".into()));
+
+        // Bool < Int < Text
+        assert!(Value::Bool(true) < Value::Int(0));
+        assert!(Value::Int(100) < Value::Text("0".into()));
+
+        // Within each type, natural ordering
+        assert!(Value::Int(1) < Value::Int(2));
+        assert!(Value::Text("a".into()) < Value::Text("b".into()));
+        assert!(Value::Bool(false) < Value::Bool(true));
+
+        // Equal values
+        assert_eq!(Value::Null.cmp(&Value::Null), Equal);
+        assert_eq!(Value::Int(42).cmp(&Value::Int(42)), Equal);
     }
 
     proptest! {

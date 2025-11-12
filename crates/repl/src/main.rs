@@ -176,7 +176,10 @@ fn execute_and_exit(mut db: DatabaseState, sql: &str) -> Result<()> {
                         println!("{}", plan_description);
                         println!();
                         println!("Execution Statistics:");
-                        println!("{}", executor::format_explain_analyze(executor.as_ref(), "Query"));
+                        println!(
+                            "{}",
+                            executor::format_explain_analyze(executor.as_ref(), "Query")
+                        );
                         println!("Total rows: {}", row_count);
 
                         Ok::<(), common::DbError>(())

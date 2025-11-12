@@ -1116,6 +1116,203 @@ mod tests {
         let rows = execute_query(scan_plan, &mut ctx).unwrap();
         assert_eq!(rows.len(), 3);
     }
+
+    #[test]
+    fn pk_index_persists_across_sessions() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Session 1: Create table, insert rows
+        {
+            let mut catalog = Catalog::new();
+            catalog
+                .create_table(
+                    "users",
+                    vec![
+                        Column::new("id", SqlType::Int),
+                        Column::new("name", SqlType::Text),
+                    ],
+                    Some(vec![0]), // PRIMARY KEY (id)
+                )
+                .unwrap();
+            catalog.save(&temp_dir.path().join("catalog.json")).unwrap();
+
+            let catalog = Box::leak(Box::new(catalog));
+            let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+            let wal = Box::leak(Box::new(
+                wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+            ));
+            let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+            let table_id = TableId(1);
+
+            // Insert rows
+            let insert1 = PhysicalPlan::Insert {
+                table_id,
+                values: vec![lit_int(1), lit_text("alice")],
+            };
+            execute_dml(insert1, &mut ctx).unwrap();
+
+            let insert2 = PhysicalPlan::Insert {
+                table_id,
+                values: vec![lit_int(2), lit_text("bob")],
+            };
+            execute_dml(insert2, &mut ctx).unwrap();
+
+            // Verify .pk_idx file was created
+            let pk_idx_path = temp_dir.path().join("users.pk_idx");
+            assert!(pk_idx_path.exists());
+        }
+
+        // Session 2: Create new context, verify PK enforcement works (index loaded from file)
+        {
+            let catalog = Catalog::load(&temp_dir.path().join("catalog.json")).unwrap();
+            let catalog = Box::leak(Box::new(catalog));
+            let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+            let wal = Box::leak(Box::new(
+                wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+            ));
+            let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+            let table_id = TableId(1);
+
+            // Try to insert duplicate PK (should fail)
+            let insert_duplicate = PhysicalPlan::Insert {
+                table_id,
+                values: vec![lit_int(1), lit_text("charlie")],
+            };
+            let result = execute_dml(insert_duplicate, &mut ctx);
+            assert!(result.is_err());
+            assert!(format!("{:?}", result).contains("duplicate primary key"));
+
+            // Insert new unique PK (should succeed)
+            let insert_new = PhysicalPlan::Insert {
+                table_id,
+                values: vec![lit_int(3), lit_text("charlie")],
+            };
+            assert!(execute_dml(insert_new, &mut ctx).is_ok());
+        }
+    }
+
+    #[test]
+    fn pk_index_rebuilds_from_heap_on_missing_file() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::new();
+        catalog
+            .create_table(
+                "users",
+                vec![
+                    Column::new("id", SqlType::Int),
+                    Column::new("name", SqlType::Text),
+                ],
+                Some(vec![0]), // PRIMARY KEY (id)
+            )
+            .unwrap();
+
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(
+            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+        ));
+        let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+        let table_id = TableId(1);
+
+        // Insert rows (creates .pk_idx)
+        let insert = PhysicalPlan::Insert {
+            table_id,
+            values: vec![lit_int(1), lit_text("alice")],
+        };
+        execute_dml(insert, &mut ctx).unwrap();
+
+        // Manually delete .pk_idx file
+        let pk_idx_path = temp_dir.path().join("users.pk_idx");
+        std::fs::remove_file(&pk_idx_path).unwrap();
+        assert!(!pk_idx_path.exists());
+
+        // Clear in-memory index
+        ctx.pk_indexes.clear();
+
+        // Try to insert duplicate (should still fail - rebuilt from heap)
+        let insert_dup = PhysicalPlan::Insert {
+            table_id,
+            values: vec![lit_int(1), lit_text("bob")],
+        };
+        let result = execute_dml(insert_dup, &mut ctx);
+        assert!(result.is_err());
+        assert!(format!("{:?}", result).contains("duplicate primary key"));
+    }
+
+    #[test]
+    fn delete_updates_persisted_index() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Session 1: Insert and delete
+        {
+            let mut catalog = Catalog::new();
+            catalog
+                .create_table(
+                    "users",
+                    vec![
+                        Column::new("id", SqlType::Int),
+                        Column::new("name", SqlType::Text),
+                    ],
+                    Some(vec![0]), // PRIMARY KEY (id)
+                )
+                .unwrap();
+            catalog.save(&temp_dir.path().join("catalog.json")).unwrap();
+
+            let catalog = Box::leak(Box::new(catalog));
+            let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+            let wal = Box::leak(Box::new(
+                wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+            ));
+            let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+            let table_id = TableId(1);
+
+            // Insert then delete
+            let insert = PhysicalPlan::Insert {
+                table_id,
+                values: vec![lit_int(1), lit_text("alice")],
+            };
+            execute_dml(insert, &mut ctx).unwrap();
+
+            let delete = PhysicalPlan::Delete {
+                table_id,
+                predicate: Some(ResolvedExpr::Literal(Value::Bool(true))),
+            };
+            execute_dml(delete, &mut ctx).unwrap();
+        }
+
+        // Session 2: Verify deleted key can be reinserted
+        {
+            let catalog = Catalog::load(&temp_dir.path().join("catalog.json")).unwrap();
+            let catalog = Box::leak(Box::new(catalog));
+            let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+            let wal = Box::leak(Box::new(
+                wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+            ));
+            let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+            let table_id = TableId(1);
+
+            // Reinsert the deleted key (should succeed)
+            let insert = PhysicalPlan::Insert {
+                table_id,
+                values: vec![lit_int(1), lit_text("alice")],
+            };
+            assert!(execute_dml(insert, &mut ctx).is_ok());
+        }
+    }
 }
 
 mod builder;
@@ -1207,7 +1404,8 @@ impl<'a> ExecutionContext<'a> {
     /// Get or build the primary key index for a table.
     ///
     /// If the table has no primary key, returns None.
-    /// On first access, builds the index by scanning all existing rows.
+    /// On first access, tries to load the index from `.pk_idx` file.
+    /// If the file is missing or corrupt, falls back to scanning existing rows.
     pub fn pk_index(
         &mut self,
         table_id: TableId,
@@ -1224,8 +1422,41 @@ impl<'a> ExecutionContext<'a> {
             return Ok(Some(self.pk_indexes.get_mut(&table_id).unwrap()));
         }
 
-        // Build index by scanning existing rows
-        let mut index = pk_index::PrimaryKeyIndex::new(pk_columns.clone());
+        // Try to load index from file first
+        let index_path = self.data_dir.join(format!("{}.pk_idx", table_meta.name));
+        let index = if index_path.exists() {
+            match pk_index::PrimaryKeyIndex::load_from_file(&index_path) {
+                Ok(idx) => {
+                    // Validate pk_columns match catalog
+                    if idx.pk_columns() != pk_columns.as_slice() {
+                        return Err(DbError::Executor(
+                            "PK index column mismatch with catalog".into(),
+                        ));
+                    }
+                    idx
+                }
+                Err(_) => {
+                    // Corrupt file, fall back to heap scan
+                    self.build_pk_index_from_heap(table_id, pk_columns)?
+                }
+            }
+        } else {
+            // No file, build from heap
+            self.build_pk_index_from_heap(table_id, pk_columns)?
+        };
+
+        self.pk_indexes.insert(table_id, index);
+        Ok(Some(self.pk_indexes.get_mut(&table_id).unwrap()))
+    }
+
+    /// Build primary key index by scanning all existing rows from the heap file.
+    fn build_pk_index_from_heap(
+        &mut self,
+        table_id: TableId,
+        pk_columns: &[common::ColumnId],
+    ) -> DbResult<pk_index::PrimaryKeyIndex> {
+        let table_meta = self.catalog.table_by_id(table_id)?;
+        let mut index = pk_index::PrimaryKeyIndex::new(pk_columns.to_vec());
 
         let file_path = self.data_dir.join(format!("{}.heap", table_meta.name));
         let mut heap_file = storage::HeapFile::open(&file_path, table_id.0)?;
@@ -1254,8 +1485,21 @@ impl<'a> ExecutionContext<'a> {
             }
         }
 
-        self.pk_indexes.insert(table_id, index);
-        Ok(Some(self.pk_indexes.get_mut(&table_id).unwrap()))
+        Ok(index)
+    }
+
+    /// Save the primary key index for a table to disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DbError::Storage` if the index file cannot be written.
+    pub fn save_pk_index(&mut self, table_id: TableId) -> DbResult<()> {
+        if let Some(index) = self.pk_indexes.get(&table_id) {
+            let table_meta = self.catalog.table_by_id(table_id)?;
+            let path = self.data_dir.join(format!("{}.pk_idx", table_meta.name));
+            index.save_to_file(&path)?;
+        }
+        Ok(())
     }
 }
 

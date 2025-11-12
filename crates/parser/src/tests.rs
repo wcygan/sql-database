@@ -684,7 +684,9 @@ fn explain_analyze_select() {
         Statement::Explain { query, analyze } => {
             assert!(*analyze, "EXPLAIN ANALYZE should have analyze=true");
             match &**query {
-                Statement::Select { table, selection, .. } => {
+                Statement::Select {
+                    table, selection, ..
+                } => {
                     assert_eq!(table, "users");
                     assert!(selection.is_some(), "should have WHERE clause");
                 }

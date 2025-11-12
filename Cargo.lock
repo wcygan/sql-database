@@ -509,6 +509,7 @@ checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
 name = "executor"
 version = "0.1.0"
 dependencies = [
+ "bincode 2.0.1",
  "bon",
  "buffer",
  "catalog",
@@ -517,6 +518,7 @@ dependencies = [
  "planner",
  "pretty_assertions",
  "proptest",
+ "serde",
  "storage",
  "tempfile",
  "types",

@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bincode = { workspace = true }
 bon = { workspace = true }
 buffer = { workspace = true }
 catalog = { workspace = true }
 common = { workspace = true }
 expr = { workspace = true }
 planner = { workspace = true }
+serde = { workspace = true }
 storage = { workspace = true }
 types = { workspace = true }
 wal = { workspace = true }
