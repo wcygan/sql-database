@@ -7,7 +7,7 @@ pub enum SqlType {
     Bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Value {
     Int(i64),
     Text(String),

@@ -122,6 +122,8 @@ pub enum DbError {
     Storage(String),
     #[error("wal: {0}")]
     Wal(String),
+    #[error("constraint violation: {0}")]
+    Constraint(String),
     #[error(transparent)]
     Io(#[from] io::Error),
 }

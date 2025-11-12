@@ -537,8 +537,11 @@ mod tests {
 mod builder;
 mod dml;
 mod filter;
+mod pk_index;
 mod project;
 mod scan;
+
+pub use pk_index::PrimaryKeyIndex;
 
 use catalog::Catalog;
 use common::{DbError, DbResult, Row, TableId};
