@@ -532,6 +532,243 @@ mod tests {
         assert!(result.is_err());
         assert!(format!("{:?}", result).contains("duplicate"));
     }
+
+    // Primary key uniqueness enforcement tests
+
+    #[test]
+    fn insert_duplicate_single_column_primary_key_rejected() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::new();
+        catalog
+            .create_table(
+                "users",
+                vec![
+                    Column::new("id", SqlType::Int),
+                    Column::new("name", SqlType::Text),
+                    Column::new("active", SqlType::Bool),
+                ],
+                Some(vec![0]), // PRIMARY KEY (id)
+            )
+            .unwrap();
+
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(
+            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+        ));
+        let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+        let table_id = TableId(1);
+
+        // Insert first row with id=1
+        let plan1 = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("alice"),
+                ResolvedExpr::Literal(Value::Bool(true)),
+            ],
+        };
+        assert!(execute_dml(plan1, &mut ctx).is_ok());
+
+        // Insert second row with id=1 should fail
+        let plan2 = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("bob"),
+                ResolvedExpr::Literal(Value::Bool(false)),
+            ],
+        };
+        let result = execute_dml(plan2, &mut ctx);
+
+        assert!(result.is_err());
+        assert!(format!("{:?}", result).contains("duplicate primary key"));
+    }
+
+    #[test]
+    fn insert_duplicate_composite_primary_key_rejected() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::new();
+        catalog
+            .create_table(
+                "users",
+                vec![
+                    Column::new("id", SqlType::Int),
+                    Column::new("name", SqlType::Text),
+                    Column::new("active", SqlType::Bool),
+                ],
+                Some(vec![0, 1]), // PRIMARY KEY (id, name)
+            )
+            .unwrap();
+
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(
+            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+        ));
+        let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+        let table_id = TableId(1);
+
+        // Insert first row with (id=1, name="alice")
+        let plan1 = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("alice"),
+                ResolvedExpr::Literal(Value::Bool(true)),
+            ],
+        };
+        assert!(execute_dml(plan1, &mut ctx).is_ok());
+
+        // Insert second row with (id=1, name="alice") should fail
+        let plan2 = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("alice"),
+                ResolvedExpr::Literal(Value::Bool(false)),
+            ],
+        };
+        let result = execute_dml(plan2, &mut ctx);
+
+        assert!(result.is_err());
+        assert!(format!("{:?}", result).contains("duplicate primary key"));
+    }
+
+    #[test]
+    fn insert_different_composite_primary_key_allowed() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::new();
+        catalog
+            .create_table(
+                "users",
+                vec![
+                    Column::new("id", SqlType::Int),
+                    Column::new("name", SqlType::Text),
+                    Column::new("active", SqlType::Bool),
+                ],
+                Some(vec![0, 1]), // PRIMARY KEY (id, name)
+            )
+            .unwrap();
+
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(
+            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+        ));
+        let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+        let table_id = TableId(1);
+
+        // Insert rows with different composite PK values
+        let plan1 = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("alice"),
+                ResolvedExpr::Literal(Value::Bool(true)),
+            ],
+        };
+        assert!(execute_dml(plan1, &mut ctx).is_ok());
+
+        let plan2 = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("bob"),
+                ResolvedExpr::Literal(Value::Bool(false)),
+            ],
+        };
+        assert!(execute_dml(plan2, &mut ctx).is_ok());
+
+        let plan3 = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(2),
+                lit_text("alice"),
+                ResolvedExpr::Literal(Value::Bool(true)),
+            ],
+        };
+        assert!(execute_dml(plan3, &mut ctx).is_ok());
+
+        // Verify all three rows exist
+        let scan_plan = PhysicalPlan::SeqScan {
+            table_id,
+            schema: vec!["id".into(), "name".into(), "active".into()],
+        };
+        let rows = execute_query(scan_plan, &mut ctx).unwrap();
+        assert_eq!(rows.len(), 3);
+    }
+
+    #[test]
+    fn insert_builds_pk_index_on_first_access() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::new();
+        catalog
+            .create_table(
+                "users",
+                vec![
+                    Column::new("id", SqlType::Int),
+                    Column::new("name", SqlType::Text),
+                    Column::new("active", SqlType::Bool),
+                ],
+                Some(vec![0]), // PRIMARY KEY (id)
+            )
+            .unwrap();
+
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(
+            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+        ));
+        let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+        let table_id = TableId(1);
+
+        // Insert first row
+        let plan1 = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("alice"),
+                ResolvedExpr::Literal(Value::Bool(true)),
+            ],
+        };
+        assert!(execute_dml(plan1, &mut ctx).is_ok());
+
+        // Insert second row with different PK
+        let plan2 = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(2),
+                lit_text("bob"),
+                ResolvedExpr::Literal(Value::Bool(false)),
+            ],
+        };
+        assert!(execute_dml(plan2, &mut ctx).is_ok());
+
+        // Verify both rows can be scanned
+        let scan_plan = PhysicalPlan::SeqScan {
+            table_id,
+            schema: vec!["id".into(), "name".into(), "active".into()],
+        };
+        let rows = execute_query(scan_plan, &mut ctx).unwrap();
+        assert_eq!(rows.len(), 2);
+    }
 }
 
 mod builder;
@@ -578,6 +815,8 @@ pub struct ExecutionContext<'a> {
     pub pager: &'a mut dyn buffer::Pager,
     pub wal: &'a mut Wal,
     pub data_dir: PathBuf,
+    /// Primary key indexes, lazily built on first table access
+    pk_indexes: std::collections::HashMap<TableId, pk_index::PrimaryKeyIndex>,
 }
 
 impl<'a> ExecutionContext<'a> {
@@ -593,6 +832,7 @@ impl<'a> ExecutionContext<'a> {
             pager,
             wal,
             data_dir,
+            pk_indexes: std::collections::HashMap::new(),
         }
     }
 
@@ -608,6 +848,57 @@ impl<'a> ExecutionContext<'a> {
     pub fn log_dml(&mut self, record: WalRecord) -> DbResult<()> {
         self.wal.append(&record)?;
         self.wal.sync()
+    }
+
+    /// Get or build the primary key index for a table.
+    ///
+    /// If the table has no primary key, returns None.
+    /// On first access, builds the index by scanning all existing rows.
+    pub fn pk_index(&mut self, table_id: TableId) -> DbResult<Option<&mut pk_index::PrimaryKeyIndex>> {
+        let table_meta = self.catalog.table_by_id(table_id)?;
+
+        // No PK defined for this table
+        let Some(pk_columns) = &table_meta.primary_key else {
+            return Ok(None);
+        };
+
+        // Index already built
+        if self.pk_indexes.contains_key(&table_id) {
+            return Ok(Some(self.pk_indexes.get_mut(&table_id).unwrap()));
+        }
+
+        // Build index by scanning existing rows
+        let mut index = pk_index::PrimaryKeyIndex::new(pk_columns.clone());
+
+        let file_path = self.data_dir.join(format!("{}.heap", table_meta.name));
+        let mut heap_file = storage::HeapFile::open(&file_path, table_id.0)?;
+
+        // Scan all pages and slots to find existing rows
+        let mut page_id = common::PageId(0);
+        loop {
+            let mut found_row_in_page = false;
+
+            for slot in 0..100 {
+                let rid = common::RecordId { page_id, slot };
+                // get() returns Ok(row) or Err if slot is empty/invalid
+                if let Ok(row) = heap_file.get(rid) {
+                    found_row_in_page = true;
+                    let key = index.extract_key(&row)?;
+                    // Silently ignore duplicates during index build (existing data may be inconsistent)
+                    let _ = index.insert(key, rid);
+                }
+            }
+
+            // Move to next page if we found any rows, otherwise we've scanned all data
+            if found_row_in_page {
+                page_id = common::PageId(page_id.0 + 1);
+            } else {
+                break;
+            }
+        }
+
+        self.pk_indexes.insert(table_id, index);
+        Ok(Some(self.pk_indexes.get_mut(&table_id).unwrap()))
     }
 }
 

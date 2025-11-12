@@ -53,13 +53,30 @@ impl Executor for InsertExec {
 
         let row = Row::new(row_values.clone());
 
-        // 1. Insert into storage to get RID
+        // 1. Check primary key uniqueness if table has PK
+        if let Some(pk_index) = ctx.pk_index(self.table_id)? {
+            let key = pk_index.extract_key(&row)?;
+            if pk_index.contains(&key) {
+                return Err(common::DbError::Constraint(format!(
+                    "duplicate primary key value: {:?}",
+                    key
+                )));
+            }
+        }
+
+        // 2. Insert into storage to get RID
         let rid = {
             let mut heap_table = ctx.heap_table(self.table_id)?;
             heap_table.insert(&row)?
         };
 
-        // 2. Log to WAL after successful insert
+        // 3. Update PK index with new entry
+        if let Some(pk_index) = ctx.pk_index(self.table_id)? {
+            let key = pk_index.extract_key(&row)?;
+            pk_index.insert(key, rid)?;
+        }
+
+        // 4. Log to WAL after successful insert
         let wal_record = WalRecord::Insert {
             table: self.table_id,
             row: row_values,

@@ -8,7 +8,7 @@
   - [x] Write 9 unit tests for PK metadata and persistence (catalog/src/lib.rs:1042-1146)
   - [x] Extend parser to support `PRIMARY KEY (col1, col2, ...)` table constraint syntax (parser/src/lib.rs:344-373)
   - [x] Thread PK column list from parser → REPL → catalog during CREATE TABLE (repl/src/main.rs:120-160, executor/src/lib.rs:416-541)
-  - [ ] Implement `PrimaryKeyIndex` struct with HashMap-based uniqueness checking
+  - [x] Implement `PrimaryKeyIndex` struct with HashMap-based uniqueness checking (executor/src/pk_index.rs:1-227, 9 unit tests)
   - [ ] Build PK index on ExecutionContext table open by scanning existing rows
   - [ ] Add PK uniqueness validation to INSERT (check index before heap insert)
   - [ ] Write regression tests proving duplicate PK inserts are rejected
