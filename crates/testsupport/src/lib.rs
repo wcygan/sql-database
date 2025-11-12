@@ -67,6 +67,7 @@ pub mod fixtures;
 pub mod macros;
 pub mod proptest_generators;
 pub mod runner;
+pub mod server;
 
 /// Convenient re-exports for common testing patterns.
 pub mod prelude {
@@ -74,6 +75,7 @@ pub mod prelude {
     pub use crate::context::*;
     pub use crate::fixtures::*;
     pub use crate::runner::*;
+    pub use crate::server::TestServer;
 
     // Re-export test setup macros
     pub use crate::row;

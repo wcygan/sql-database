@@ -31,6 +31,19 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
             ..
         } => {
             let table = normalize_object_name(&name)?;
+            let inline_primary_key = extract_inline_primary_key(&columns)?;
+            let table_primary_key = extract_primary_key(&constraints)?;
+            let primary_key = match (table_primary_key, inline_primary_key) {
+                (Some(_), Some(_)) => {
+                    return Err(DbError::Parser(
+                        "PRIMARY KEY defined both inline and at table level".into(),
+                    ))
+                }
+                (Some(pk), None) => Some(pk),
+                (None, Some(pk)) => Some(pk),
+                (None, None) => None,
+            };
+
             let mapped_columns = columns
                 .into_iter()
                 .map(|col| ColumnDef {
@@ -38,9 +51,6 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
                     ty: col.data_type.to_string().to_uppercase(),
                 })
                 .collect();
-
-            // Extract PRIMARY KEY constraint if present
-            let primary_key = extract_primary_key(&constraints)?;
 
             Ok(Statement::CreateTable {
                 name: table,
@@ -371,4 +381,33 @@ fn extract_primary_key(constraints: &[sqlast::TableConstraint]) -> DbResult<Opti
         }
     }
     Ok(None)
+}
+
+/// Extract PRIMARY KEY defined inline on column definitions.
+fn extract_inline_primary_key(columns: &[sqlast::ColumnDef]) -> DbResult<Option<Vec<String>>> {
+    use sqlast::ColumnOption;
+
+    let mut pk_columns = Vec::new();
+    for column in columns {
+        let has_primary_key = column.options.iter().any(|opt| {
+            matches!(
+                opt.option,
+                ColumnOption::Unique {
+                    is_primary: true,
+                    ..
+                }
+            )
+        });
+        if has_primary_key {
+            pk_columns.push(normalize_ident(&column.name));
+        }
+    }
+
+    match pk_columns.len() {
+        0 => Ok(None),
+        1 => Ok(Some(pk_columns)),
+        _ => Err(DbError::Parser(
+            "multiple PRIMARY KEY column constraints; use PRIMARY KEY (col1, col2)".into(),
+        )),
+    }
 }

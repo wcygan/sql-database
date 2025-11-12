@@ -17,5 +17,7 @@ anyhow = { workspace = true }
 clap = { workspace = true }
 
 [dev-dependencies]
+client = { workspace = true }
+testsupport = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }

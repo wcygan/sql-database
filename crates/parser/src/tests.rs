@@ -622,6 +622,42 @@ fn create_table_with_single_column_primary_key() {
 }
 
 #[test]
+fn create_table_with_inline_primary_key() {
+    let stmts = parse_sql("CREATE TABLE accounts (id INT PRIMARY KEY, name TEXT)").unwrap();
+    assert_eq!(stmts.len(), 1);
+
+    match &stmts[0] {
+        Statement::CreateTable { primary_key, .. } => {
+            assert_eq!(primary_key, &Some(vec!["id".to_string()]));
+        }
+        _ => panic!("expected CreateTable statement"),
+    }
+}
+
+#[test]
+fn duplicate_primary_key_definitions_are_rejected() {
+    let err = parse_sql("CREATE TABLE accounts (id INT PRIMARY KEY, name TEXT, PRIMARY KEY (id))")
+        .expect_err("multiple PK definitions should fail");
+    assert!(
+        err.to_string()
+            .to_lowercase()
+            .contains("primary key defined both inline and at table level"),
+        "unexpected error: {err:?}"
+    );
+}
+
+#[test]
+fn multiple_inline_primary_key_columns_are_rejected() {
+    let err = parse_sql("CREATE TABLE t (a INT PRIMARY KEY, b INT PRIMARY KEY)").unwrap_err();
+    assert!(
+        err.to_string()
+            .to_lowercase()
+            .contains("multiple primary key column constraints"),
+        "unexpected error: {err:?}"
+    );
+}
+
+#[test]
 fn create_table_with_composite_primary_key() {
     let stmts = parse_sql(
         "CREATE TABLE orders (user_id INT, product_id INT, PRIMARY KEY (user_id, product_id))",

@@ -16,6 +16,7 @@ storage = { workspace = true }
 buffer = { workspace = true }
 wal = { workspace = true }
 expr = { workspace = true }
+protocol = { workspace = true }
 
 # Testing utilities
 tempfile = { workspace = true }
