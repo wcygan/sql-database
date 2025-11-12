@@ -140,6 +140,7 @@ impl<'a> App<'a> {
                     column,
                 } => self.create_index(name, table, column)?,
                 Statement::DropIndex { name } => self.drop_index(name)?,
+                Statement::Explain { query, analyze } => self.execute_explain(*query, analyze)?,
                 other => self.execute_planned(other)?,
             }
         }
@@ -253,6 +254,62 @@ impl<'a> App<'a> {
 
         self.results = None;
         self.status_message = Some(format!("Dropped index '{}' on '{}'", name, table_name));
+        Ok(())
+    }
+
+    fn execute_explain(&mut self, query: Statement, analyze: bool) -> Result<()> {
+        let mut planning_ctx = PlanningContext::new(&self.db.catalog);
+        let plan = Planner::plan(query, &mut planning_ctx).map_err(anyhow::Error::from)?;
+
+        if analyze {
+            // EXPLAIN ANALYZE: Execute and show statistics
+            let plan_description = planner::explain_physical(&plan);
+
+            let stats_output = self.db.with_execution_context(|ctx| {
+                let mut executor = executor::build_executor(plan)?;
+                executor.open(ctx)?;
+
+                // Consume all rows to collect statistics
+                let mut row_count = 0;
+                while executor.next(ctx)?.is_some() {
+                    row_count += 1;
+                }
+                executor.close(ctx)?;
+
+                // Format statistics
+                let stats = executor::format_explain_analyze(executor.as_ref(), "Query");
+                Ok::<String, common::DbError>(format!(
+                    "EXPLAIN ANALYZE:\n{}\n\nExecution Statistics:\n{}\nTotal rows: {}",
+                    plan_description, stats, row_count
+                ))
+            })?;
+
+            // Display as single-column result
+            let rows = stats_output
+                .lines()
+                .map(|line| common::Row::new(vec![types::Value::Text(line.to_string())]))
+                .collect();
+
+            self.results = Some(RecordBatch {
+                columns: vec!["Plan".to_string()],
+                rows,
+            });
+            self.status_message = None;
+        } else {
+            // EXPLAIN: Just show the plan
+            let plan_description = planner::explain_physical(&plan);
+            let rows = plan_description
+                .lines()
+                .map(|line| common::Row::new(vec![types::Value::Text(line.to_string())]))
+                .collect();
+
+            self.results = Some(RecordBatch {
+                columns: vec!["Plan".to_string()],
+                rows,
+            });
+            self.status_message = None;
+        }
+
         Ok(())
     }
 
