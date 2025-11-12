@@ -25,7 +25,7 @@ fn parse_create_and_drop_statements() {
     assert_eq!(stmts.len(), 4);
 
     match &stmts[0] {
-        Statement::CreateTable { name, columns } => {
+        Statement::CreateTable { name, columns, .. } => {
             assert_eq!(name, "users");
             assert_eq!(columns.len(), 3);
             assert_eq!(columns[0].name, "id");
@@ -270,7 +270,7 @@ fn sql_subset_v1_example_script() {
     assert_eq!(stmts.len(), 11);
 
     match &stmts[0] {
-        Statement::CreateTable { name, columns } => {
+        Statement::CreateTable { name, columns, .. } => {
             assert_eq!(name, "users");
             assert_eq!(columns.len(), 3);
         }
@@ -598,4 +598,74 @@ fn invalid_sql_syntax_produces_parse_error() {
         format!("{err:?}").contains("SQL parse error"),
         "expected SQL parse error, got: {err:?}"
     );
+}
+
+#[test]
+fn create_table_with_single_column_primary_key() {
+    let stmts = parse_sql("CREATE TABLE users (id INT, name TEXT, PRIMARY KEY (id))").unwrap();
+    assert_eq!(stmts.len(), 1);
+
+    match &stmts[0] {
+        Statement::CreateTable {
+            name,
+            columns,
+            primary_key,
+        } => {
+            assert_eq!(name, "users");
+            assert_eq!(columns.len(), 2);
+            assert_eq!(columns[0].name, "id");
+            assert_eq!(columns[1].name, "name");
+            assert_eq!(primary_key, &Some(vec!["id".to_string()]));
+        }
+        _ => panic!("expected CreateTable statement"),
+    }
+}
+
+#[test]
+fn create_table_with_composite_primary_key() {
+    let stmts = parse_sql(
+        "CREATE TABLE orders (user_id INT, product_id INT, PRIMARY KEY (user_id, product_id))",
+    )
+    .unwrap();
+    assert_eq!(stmts.len(), 1);
+
+    match &stmts[0] {
+        Statement::CreateTable {
+            name, primary_key, ..
+        } => {
+            assert_eq!(name, "orders");
+            assert_eq!(
+                primary_key,
+                &Some(vec!["user_id".to_string(), "product_id".to_string()])
+            );
+        }
+        _ => panic!("expected CreateTable statement"),
+    }
+}
+
+#[test]
+fn create_table_without_primary_key() {
+    let stmts = parse_sql("CREATE TABLE users (id INT, name TEXT)").unwrap();
+    assert_eq!(stmts.len(), 1);
+
+    match &stmts[0] {
+        Statement::CreateTable { primary_key, .. } => {
+            assert_eq!(primary_key, &None);
+        }
+        _ => panic!("expected CreateTable statement"),
+    }
+}
+
+#[test]
+fn create_table_primary_key_case_insensitive() {
+    let stmts = parse_sql("CREATE TABLE users (ID INT, NAME TEXT, PRIMARY KEY (ID))").unwrap();
+    assert_eq!(stmts.len(), 1);
+
+    match &stmts[0] {
+        Statement::CreateTable { primary_key, .. } => {
+            // normalize_ident lowercases identifiers
+            assert_eq!(primary_key, &Some(vec!["id".to_string()]));
+        }
+        _ => panic!("expected CreateTable statement"),
+    }
 }

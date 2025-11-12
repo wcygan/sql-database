@@ -24,7 +24,12 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
     use sqlast::Statement as SqlStatement;
 
     match stmt {
-        SqlStatement::CreateTable { name, columns, .. } => {
+        SqlStatement::CreateTable {
+            name,
+            columns,
+            constraints,
+            ..
+        } => {
             let table = normalize_object_name(&name)?;
             let mapped_columns = columns
                 .into_iter()
@@ -33,9 +38,14 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
                     ty: col.data_type.to_string().to_uppercase(),
                 })
                 .collect();
+
+            // Extract PRIMARY KEY constraint if present
+            let primary_key = extract_primary_key(&constraints)?;
+
             Ok(Statement::CreateTable {
                 name: table,
                 columns: mapped_columns,
+                primary_key,
             })
         }
         SqlStatement::Drop {
@@ -327,4 +337,32 @@ fn ensure_plain_wildcard(options: &sqlast::WildcardAdditionalOptions) -> DbResul
     } else {
         Ok(())
     }
+}
+
+/// Extract PRIMARY KEY constraint from table constraints.
+/// Returns Some(Vec<String>) if PRIMARY KEY is found, None otherwise.
+fn extract_primary_key(constraints: &[sqlast::TableConstraint]) -> DbResult<Option<Vec<String>>> {
+    use sqlast::TableConstraint;
+
+    for constraint in constraints {
+        match constraint {
+            TableConstraint::Unique {
+                columns,
+                is_primary,
+                ..
+            } if *is_primary => {
+                let pk_columns: Vec<String> = columns.iter().map(normalize_ident).collect();
+
+                if pk_columns.is_empty() {
+                    return Err(DbError::Parser(
+                        "PRIMARY KEY must include at least one column".into(),
+                    ));
+                }
+
+                return Ok(Some(pk_columns));
+            }
+            _ => continue,
+        }
+    }
+    Ok(None)
 }

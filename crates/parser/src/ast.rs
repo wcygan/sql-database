@@ -5,6 +5,7 @@ pub enum Statement {
     CreateTable {
         name: String,
         columns: Vec<ColumnDef>,
+        primary_key: Option<Vec<String>>,
     },
     DropTable {
         name: String,
