@@ -1,8 +1,9 @@
 //! Filter operator: applies WHERE predicates.
 
 use crate::{ExecutionContext, Executor};
-use common::{DbResult, Row};
+use common::{DbResult, ExecutionStats, Row};
 use planner::ResolvedExpr;
+use std::time::Instant;
 use types::Value;
 
 /// Filter operator - applies a predicate to rows from a child operator.
@@ -12,12 +13,17 @@ use types::Value;
 pub struct FilterExec {
     input: Box<dyn Executor>,
     predicate: ResolvedExpr,
+    stats: ExecutionStats,
 }
 
 impl FilterExec {
     /// Create a new filter operator.
     pub fn new(input: Box<dyn Executor>, predicate: ResolvedExpr) -> Self {
-        Self { input, predicate }
+        Self {
+            input,
+            predicate,
+            stats: ExecutionStats::default(),
+        }
     }
 
     /// Evaluate the predicate against a row.
@@ -38,28 +44,48 @@ impl FilterExec {
 
 impl Executor for FilterExec {
     fn open(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
-        self.input.open(ctx)
+        let start = Instant::now();
+        self.stats = ExecutionStats::default();
+        let result = self.input.open(ctx)?;
+        self.stats.open_time = start.elapsed();
+        Ok(result)
     }
 
     fn next(&mut self, ctx: &mut ExecutionContext) -> DbResult<Option<Row>> {
+        let start = Instant::now();
+
         loop {
             let row = match self.input.next(ctx)? {
                 Some(r) => r,
-                None => return Ok(None),
+                None => {
+                    self.stats.total_next_time += start.elapsed();
+                    return Ok(None);
+                }
             };
 
             if self.eval_predicate(&row)? {
+                self.stats.rows_produced += 1;
+                self.stats.total_next_time += start.elapsed();
                 return Ok(Some(row));
+            } else {
+                self.stats.rows_filtered += 1;
             }
         }
     }
 
     fn close(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
-        self.input.close(ctx)
+        let start = Instant::now();
+        let result = self.input.close(ctx)?;
+        self.stats.close_time = start.elapsed();
+        Ok(result)
     }
 
     fn schema(&self) -> &[String] {
         self.input.schema()
+    }
+
+    fn stats(&self) -> Option<&ExecutionStats> {
+        Some(&self.stats)
     }
 }
 

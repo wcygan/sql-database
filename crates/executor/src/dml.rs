@@ -1,7 +1,7 @@
 //! DML operators: Insert, Update, Delete.
 
 use crate::{filter::eval_resolved_expr, ExecutionContext, Executor};
-use common::{ColumnId, DbResult, Row, TableId};
+use common::{ColumnId, DbResult, ExecutionStats, Row, TableId};
 use planner::ResolvedExpr;
 use storage::HeapTable;
 use types::Value;
@@ -16,6 +16,7 @@ pub struct InsertExec {
     schema: Vec<String>,
     values: Vec<ResolvedExpr>,
     executed: bool,
+    stats: ExecutionStats,
 }
 
 impl InsertExec {
@@ -26,6 +27,7 @@ impl InsertExec {
             schema,
             values,
             executed: false,
+            stats: ExecutionStats::default(),
         }
     }
 }
@@ -95,6 +97,10 @@ impl Executor for InsertExec {
     fn schema(&self) -> &[String] {
         &self.schema
     }
+
+    fn stats(&self) -> Option<&ExecutionStats> {
+        Some(&self.stats)
+    }
 }
 
 /// Update operator - updates rows matching a predicate with WAL logging.
@@ -108,6 +114,7 @@ pub struct UpdateExec {
     input: Box<dyn Executor>,
     assignments: Vec<(ColumnId, ResolvedExpr)>,
     executed: bool,
+    stats: ExecutionStats,
 }
 
 #[bon::bon]
@@ -136,6 +143,7 @@ impl UpdateExec {
             input,
             assignments,
             executed: false,
+            stats: ExecutionStats::default(),
         }
     }
 
@@ -230,6 +238,10 @@ impl Executor for UpdateExec {
     fn schema(&self) -> &[String] {
         &self.schema
     }
+
+    fn stats(&self) -> Option<&ExecutionStats> {
+        Some(&self.stats)
+    }
 }
 
 /// Delete operator - deletes rows matching a predicate with WAL logging.
@@ -242,6 +254,7 @@ pub struct DeleteExec {
     schema: Vec<String>,
     input: Box<dyn Executor>,
     executed: bool,
+    stats: ExecutionStats,
 }
 
 impl DeleteExec {
@@ -252,6 +265,7 @@ impl DeleteExec {
             schema,
             input,
             executed: false,
+            stats: ExecutionStats::default(),
         }
     }
 }
@@ -306,6 +320,10 @@ impl Executor for DeleteExec {
 
     fn schema(&self) -> &[String] {
         &self.schema
+    }
+
+    fn stats(&self) -> Option<&ExecutionStats> {
+        Some(&self.stats)
     }
 }
 

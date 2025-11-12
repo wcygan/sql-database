@@ -1,7 +1,8 @@
 //! Project operator: selects and reorders columns.
 
 use crate::{ExecutionContext, Executor};
-use common::{ColumnId, DbResult, Row};
+use common::{ColumnId, DbResult, ExecutionStats, Row};
+use std::time::Instant;
 
 /// Project operator - selects/reorders columns from input rows.
 ///
@@ -10,24 +11,38 @@ use common::{ColumnId, DbResult, Row};
 pub struct ProjectExec {
     input: Box<dyn Executor>,
     projections: Vec<(String, ColumnId)>,
+    stats: ExecutionStats,
 }
 
 impl ProjectExec {
     /// Create a new project operator.
     pub fn new(input: Box<dyn Executor>, projections: Vec<(String, ColumnId)>) -> Self {
-        Self { input, projections }
+        Self {
+            input,
+            projections,
+            stats: ExecutionStats::default(),
+        }
     }
 }
 
 impl Executor for ProjectExec {
     fn open(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
-        self.input.open(ctx)
+        let start = Instant::now();
+        self.stats = ExecutionStats::default();
+        let result = self.input.open(ctx)?;
+        self.stats.open_time = start.elapsed();
+        Ok(result)
     }
 
     fn next(&mut self, ctx: &mut ExecutionContext) -> DbResult<Option<Row>> {
+        let start = Instant::now();
+
         let row = match self.input.next(ctx)? {
             Some(r) => r,
-            None => return Ok(None),
+            None => {
+                self.stats.total_next_time += start.elapsed();
+                return Ok(None);
+            }
         };
 
         let rid = row.rid();
@@ -54,17 +69,26 @@ impl Executor for ProjectExec {
         let mut projected = Row::new(projected_values);
         projected.set_rid(rid);
 
+        self.stats.rows_produced += 1;
+        self.stats.total_next_time += start.elapsed();
         Ok(Some(projected))
     }
 
     fn close(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
-        self.input.close(ctx)
+        let start = Instant::now();
+        let result = self.input.close(ctx)?;
+        self.stats.close_time = start.elapsed();
+        Ok(result)
     }
 
     fn schema(&self) -> &[String] {
         // Return just the output names
         static EMPTY: Vec<String> = Vec::new();
         &EMPTY
+    }
+
+    fn stats(&self) -> Option<&ExecutionStats> {
+        Some(&self.stats)
     }
 }
 
