@@ -46,6 +46,31 @@ pub fn render_record_batch(batch: &RecordBatch, style: TableStyleKind) -> String
     }
 }
 
+/// Render arbitrary string rows with the provided style.
+pub fn render_string_table(
+    headers: &[&str],
+    rows: Vec<Vec<String>>,
+    style: TableStyleKind,
+) -> String {
+    if headers.is_empty() && rows.is_empty() {
+        return "<empty>".into();
+    }
+
+    let mut builder = Builder::default();
+
+    if !headers.is_empty() {
+        builder.push_record(headers.iter().copied());
+    }
+
+    for row in rows {
+        builder.push_record(row);
+    }
+
+    let mut table = builder.build();
+    style.apply(&mut table);
+    table.to_string()
+}
+
 /// Render any `Tabled` rows with the provided style.
 pub fn render_structured_rows<T>(rows: &[T], style: TableStyleKind) -> String
 where

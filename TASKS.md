@@ -9,10 +9,10 @@
   - [x] Extend parser to support `PRIMARY KEY (col1, col2, ...)` table constraint syntax (parser/src/lib.rs:344-373)
   - [x] Thread PK column list from parser → REPL → catalog during CREATE TABLE (repl/src/main.rs:120-160, executor/src/lib.rs:416-541)
   - [x] Implement `PrimaryKeyIndex` struct with HashMap-based uniqueness checking (executor/src/pk_index.rs:1-227, 9 unit tests)
-  - [ ] Build PK index on ExecutionContext table open by scanning existing rows
-  - [ ] Add PK uniqueness validation to INSERT (check index before heap insert)
-  - [ ] Write regression tests proving duplicate PK inserts are rejected
-  - [ ] Forbid UPDATE operations that modify PK columns
-  - [ ] Write regression tests proving PK updates are rejected
+  - [x] Build PK index on ExecutionContext table open by scanning existing rows (executor/src/lib.rs:857-901)
+  - [x] Add PK uniqueness validation to INSERT (check index before heap insert) (executor/src/dml.rs:56-77)
+  - [x] Write regression tests proving duplicate PK inserts are rejected (executor/src/lib.rs:538-771, 4 tests)
+  - [x] Forbid UPDATE operations that modify PK columns (executor/src/dml.rs:165-177)
+  - [x] Write regression tests proving PK updates are rejected (executor/src/lib.rs:773-924, 3 tests)
   - [ ] Remove PK entries from index on DELETE
   - [ ] Write regression tests proving deleted PKs can be reinserted

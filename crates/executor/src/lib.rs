@@ -769,6 +769,159 @@ mod tests {
         let rows = execute_query(scan_plan, &mut ctx).unwrap();
         assert_eq!(rows.len(), 2);
     }
+
+    #[test]
+    fn update_single_column_primary_key_rejected() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::new();
+        catalog
+            .create_table(
+                "users",
+                vec![
+                    Column::new("id", SqlType::Int),
+                    Column::new("name", SqlType::Text),
+                    Column::new("active", SqlType::Bool),
+                ],
+                Some(vec![0]), // PRIMARY KEY (id)
+            )
+            .unwrap();
+
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(
+            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+        ));
+        let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+        let table_id = TableId(1);
+
+        // Insert a row
+        let insert_plan = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("alice"),
+                ResolvedExpr::Literal(Value::Bool(true)),
+            ],
+        };
+        assert!(execute_dml(insert_plan, &mut ctx).is_ok());
+
+        // Try to update the PK column (should fail)
+        let update_plan = PhysicalPlan::Update {
+            table_id,
+            assignments: vec![(0, lit_int(2))], // Update id column
+            predicate: Some(ResolvedExpr::Literal(Value::Bool(true))),
+        };
+        let result = execute_dml(update_plan, &mut ctx);
+
+        assert!(result.is_err());
+        assert!(format!("{:?}", result).contains("primary key"));
+    }
+
+    #[test]
+    fn update_composite_primary_key_column_rejected() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::new();
+        catalog
+            .create_table(
+                "users",
+                vec![
+                    Column::new("id", SqlType::Int),
+                    Column::new("name", SqlType::Text),
+                    Column::new("active", SqlType::Bool),
+                ],
+                Some(vec![0, 1]), // PRIMARY KEY (id, name)
+            )
+            .unwrap();
+
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(
+            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+        ));
+        let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+        let table_id = TableId(1);
+
+        // Insert a row
+        let insert_plan = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("alice"),
+                ResolvedExpr::Literal(Value::Bool(true)),
+            ],
+        };
+        assert!(execute_dml(insert_plan, &mut ctx).is_ok());
+
+        // Try to update one PK column (should fail)
+        let update_plan = PhysicalPlan::Update {
+            table_id,
+            assignments: vec![(1, lit_text("bob"))], // Update name column (part of PK)
+            predicate: Some(ResolvedExpr::Literal(Value::Bool(true))),
+        };
+        let result = execute_dml(update_plan, &mut ctx);
+
+        assert!(result.is_err());
+        assert!(format!("{:?}", result).contains("primary key"));
+    }
+
+    #[test]
+    fn update_non_pk_column_allowed() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::new();
+        catalog
+            .create_table(
+                "users",
+                vec![
+                    Column::new("id", SqlType::Int),
+                    Column::new("name", SqlType::Text),
+                    Column::new("active", SqlType::Bool),
+                ],
+                Some(vec![0]), // PRIMARY KEY (id)
+            )
+            .unwrap();
+
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(
+            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+        ));
+        let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+        let table_id = TableId(1);
+
+        // Insert a row
+        let insert_plan = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("alice"),
+                ResolvedExpr::Literal(Value::Bool(true)),
+            ],
+        };
+        assert!(execute_dml(insert_plan, &mut ctx).is_ok());
+
+        // Update non-PK columns (should succeed)
+        let update_plan = PhysicalPlan::Update {
+            table_id,
+            assignments: vec![(1, lit_text("bob")), (2, ResolvedExpr::Literal(Value::Bool(false)))],
+            predicate: Some(ResolvedExpr::Literal(Value::Bool(true))),
+        };
+        let result = execute_dml(update_plan, &mut ctx);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+    }
 }
 
 mod builder;

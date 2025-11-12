@@ -6,7 +6,6 @@ use common::{
 };
 use serde::Serialize;
 use std::path::PathBuf;
-use tabled::Tabled;
 use wal::{Wal, WalRecord};
 
 fn main() {
@@ -41,12 +40,8 @@ fn run() -> Result<()> {
 
     match args.format {
         OutputFormat::Table => {
-            let rows: Vec<WalRow> = limited
-                .iter()
-                .map(|(idx, rec)| WalRow::from_record(*idx, rec))
-                .collect();
             let style: TableStyleKind = args.style.into();
-            println!("{}", pretty::render_structured_rows(&rows, style));
+            println!("{}", render_wal_records(&limited, style));
         }
         OutputFormat::Json => {
             let json_rows: Vec<JsonWalRecord<'_>> = limited
@@ -112,72 +107,14 @@ enum CliTableStyle {
     Plain,
 }
 
+const WAL_HEADERS: [&str; 5] = ["Idx", "Op", "Table", "RID", "Data"];
+
 impl From<CliTableStyle> for TableStyleKind {
     fn from(value: CliTableStyle) -> Self {
         match value {
             CliTableStyle::Modern => TableStyleKind::Modern,
             CliTableStyle::Ascii => TableStyleKind::Ascii,
             CliTableStyle::Plain => TableStyleKind::Plain,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Tabled)]
-struct WalRow {
-    #[tabled(rename = "Idx")]
-    idx: usize,
-    #[tabled(rename = "Op")]
-    op: String,
-    #[tabled(rename = "Table")]
-    table: String,
-    #[tabled(rename = "RID")]
-    rid: String,
-    #[tabled(rename = "Data")]
-    data: String,
-}
-
-impl WalRow {
-    fn from_record(idx: usize, record: &WalRecord) -> Self {
-        match record {
-            WalRecord::Insert { table, row, rid } => Self {
-                idx,
-                op: "INSERT".into(),
-                table: format_table(table),
-                rid: pretty::format_record_id(rid),
-                data: pretty::format_row(row),
-            },
-            WalRecord::Update {
-                table,
-                rid,
-                new_row,
-            } => Self {
-                idx,
-                op: "UPDATE".into(),
-                table: format_table(table),
-                rid: pretty::format_record_id(rid),
-                data: pretty::format_row(new_row),
-            },
-            WalRecord::Delete { table, rid } => Self {
-                idx,
-                op: "DELETE".into(),
-                table: format_table(table),
-                rid: pretty::format_record_id(rid),
-                data: "-".into(),
-            },
-            WalRecord::CreateTable { name, table } => Self {
-                idx,
-                op: "CREATE".into(),
-                table: format!("{} ({})", name, table.0),
-                rid: "-".into(),
-                data: "-".into(),
-            },
-            WalRecord::DropTable { table } => Self {
-                idx,
-                op: "DROP".into(),
-                table: format_table(table),
-                rid: "-".into(),
-                data: "-".into(),
-            },
         }
     }
 }
@@ -190,4 +127,55 @@ fn format_table(table: &TableId) -> String {
 struct JsonWalRecord<'a> {
     idx: usize,
     record: &'a WalRecord,
+}
+
+fn render_wal_records(records: &[(usize, WalRecord)], style: TableStyleKind) -> String {
+    if records.is_empty() {
+        return "<empty>".into();
+    }
+
+    let rows = records
+        .iter()
+        .map(|(idx, record)| wal_record_to_cells(*idx, record))
+        .collect();
+
+    pretty::render_string_table(&WAL_HEADERS, rows, style)
+}
+
+fn wal_record_to_cells(idx: usize, record: &WalRecord) -> Vec<String> {
+    let (op, table, rid, data) = match record {
+        WalRecord::Insert { table, row, rid } => (
+            "INSERT".into(),
+            format_table(table),
+            pretty::format_record_id(rid),
+            pretty::format_row(row),
+        ),
+        WalRecord::Update {
+            table,
+            rid,
+            new_row,
+        } => (
+            "UPDATE".into(),
+            format_table(table),
+            pretty::format_record_id(rid),
+            pretty::format_row(new_row),
+        ),
+        WalRecord::Delete { table, rid } => (
+            "DELETE".into(),
+            format_table(table),
+            pretty::format_record_id(rid),
+            "-".into(),
+        ),
+        WalRecord::CreateTable { name, table } => (
+            "CREATE".into(),
+            format!("{} ({})", name, table.0),
+            "-".into(),
+            "-".into(),
+        ),
+        WalRecord::DropTable { table } => {
+            ("DROP".into(), format_table(table), "-".into(), "-".into())
+        }
+    };
+
+    vec![idx.to_string(), op, table, rid, data]
 }

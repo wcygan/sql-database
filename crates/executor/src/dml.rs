@@ -163,6 +163,19 @@ impl UpdateExec {
 
 impl Executor for UpdateExec {
     fn open(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
+        // Validate that no assignments modify primary key columns
+        let table_meta = ctx.catalog.table_by_id(self.table_id)?;
+        if let Some(pk_columns) = &table_meta.primary_key {
+            for (col_id, _) in &self.assignments {
+                if pk_columns.contains(col_id) {
+                    return Err(common::DbError::Constraint(format!(
+                        "cannot update primary key column {}",
+                        col_id
+                    )));
+                }
+            }
+        }
+
         self.executed = false;
         self.input.open(ctx)
     }
