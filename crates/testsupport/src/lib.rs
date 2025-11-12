@@ -6,8 +6,29 @@
 //! - Common test fixtures and data generators
 //! - Property-based test generators for core types
 //! - Custom assertion helpers
+//! - **Test setup macros** for reducing boilerplate (see MACROS.md)
 //!
-//! # Example Usage
+//! # Quick Start
+//!
+//! ## Using Test Macros (Recommended)
+//!
+//! The fastest way to set up tests is using the provided macros:
+//!
+//! ```
+//! use testsupport::prelude::*;
+//! use types::SqlType;
+//!
+//! // Setup database with one macro call (replaces 17 lines!)
+//! test_db!(mut ctx, table: "users",
+//!          cols: ["id" => SqlType::Int, "name" => SqlType::Text]);
+//!
+//! let mut exec_ctx = ctx.execution_context();
+//! // Execute queries using exec_ctx...
+//! ```
+//!
+//! See [MACROS.md](../MACROS.md) for complete macro documentation.
+//!
+//! ## Using SQL Scripts
 //!
 //! ```no_run
 //! use testsupport::prelude::*;
@@ -23,10 +44,18 @@
 //!     insta::assert_snapshot!(output);
 //! }
 //! ```
+//!
+//! # Available Macros
+//!
+//! - **`test_db!`** - Database context with catalog, pager, WAL (saves 14 lines)
+//! - **`test_pager!`** - Buffer pool pager setup (saves 3 lines)
+//! - **`test_wal!`** - Write-ahead log setup (saves 2 lines)
+//! - **`row!`** - Typed row construction with variants (int, text, bool)
 
 pub mod assertions;
 pub mod context;
 pub mod fixtures;
+pub mod macros;
 pub mod proptest_generators;
 pub mod runner;
 
@@ -36,4 +65,10 @@ pub mod prelude {
     pub use crate::context::*;
     pub use crate::fixtures::*;
     pub use crate::runner::*;
+
+    // Re-export macros for convenience
+    pub use crate::row;
+    pub use crate::test_db;
+    pub use crate::test_pager;
+    pub use crate::test_wal;
 }

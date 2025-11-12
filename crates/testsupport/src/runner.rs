@@ -142,7 +142,10 @@ pub async fn run_sql_script_with_db(sql: &str, db: &Database) -> DbResult<String
 fn format_result(result: QueryResult, stmt: &str) -> String {
     match result {
         QueryResult::Rows { schema, rows } => {
-            let batch = RecordBatch { columns: schema, rows };
+            let batch = RecordBatch {
+                columns: schema,
+                rows,
+            };
             pretty::render_record_batch(&batch, TableStyleKind::Modern)
         }
         QueryResult::Count { affected } => {

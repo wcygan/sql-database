@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use buffer::FilePager;
 use catalog::{Catalog, Column, IndexKind};
-use executor::{ExecutionContext, build_executor, execute_dml, execute_query};
-use parser::{Statement, parse_sql};
+use executor::{build_executor, execute_dml, execute_query, ExecutionContext};
+use parser::{parse_sql, Statement};
 use planner::{PhysicalPlan, Planner, PlanningContext};
 use std::{
     fs,
@@ -17,7 +17,10 @@ use wal::{Wal, WalRecord};
 #[derive(Debug)]
 pub enum QueryResult {
     /// Query returned rows
-    Rows { schema: Vec<String>, rows: Vec<common::Row> },
+    Rows {
+        schema: Vec<String>,
+        rows: Vec<common::Row>,
+    },
     /// DML operation affected N rows
     Count { affected: u64 },
     /// DDL or other operation with no result
@@ -58,7 +61,10 @@ impl Database {
         let (catalog, pager, wal, catalog_path, wal_path) =
             tokio::task::spawn_blocking(move || {
                 fs::create_dir_all(&data_dir_owned).with_context(|| {
-                    format!("failed to create data directory {}", data_dir_owned.display())
+                    format!(
+                        "failed to create data directory {}",
+                        data_dir_owned.display()
+                    )
                 })?;
 
                 let catalog_path = data_dir_owned.join(&catalog_file_owned);
@@ -120,9 +126,7 @@ impl Database {
 
             Statement::DropIndex { name } => self.execute_drop_index(name).await,
 
-            Statement::Explain { query, analyze } => {
-                self.execute_explain(*query, analyze).await
-            }
+            Statement::Explain { query, analyze } => self.execute_explain(*query, analyze).await,
 
             other => self.execute_query_or_dml(other).await,
         }
@@ -327,7 +331,11 @@ impl Database {
                 executor.open(&mut ctx).map_err(anyhow::Error::from)?;
 
                 let mut row_count = 0;
-                while executor.next(&mut ctx).map_err(anyhow::Error::from)?.is_some() {
+                while executor
+                    .next(&mut ctx)
+                    .map_err(anyhow::Error::from)?
+                    .is_some()
+                {
                     row_count += 1;
                 }
                 executor.close(&mut ctx).map_err(anyhow::Error::from)?;
@@ -411,9 +419,8 @@ impl Database {
 
         tokio::task::spawn_blocking(move || {
             // Remove all table files (.tbl) and heap files (.heap)
-            let entries = fs::read_dir(&*data_dir).with_context(|| {
-                format!("failed to read data directory {}", data_dir.display())
-            })?;
+            let entries = fs::read_dir(&*data_dir)
+                .with_context(|| format!("failed to read data directory {}", data_dir.display()))?;
 
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -499,9 +506,7 @@ fn infer_schema(plan: &PhysicalPlan) -> Vec<String> {
         PhysicalPlan::Project { columns, .. } => {
             columns.iter().map(|(name, _)| name.clone()).collect()
         }
-        PhysicalPlan::Insert { .. }
-        | PhysicalPlan::Update { .. }
-        | PhysicalPlan::Delete { .. } => {
+        PhysicalPlan::Insert { .. } | PhysicalPlan::Update { .. } | PhysicalPlan::Delete { .. } => {
             vec![]
         }
     }

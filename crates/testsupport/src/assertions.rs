@@ -105,10 +105,7 @@ pub fn assert_error_contains<T>(result: DbResult<T>, expected_msg: &str) {
 /// ```
 pub fn assert_executor_error<T>(result: DbResult<T>, expected_msg: &str) {
     match result {
-        Ok(_) => panic!(
-            "Expected executor error '{}', but got Ok",
-            expected_msg
-        ),
+        Ok(_) => panic!("Expected executor error '{}', but got Ok", expected_msg),
         Err(DbError::Executor(msg)) => {
             assert!(
                 msg.contains(expected_msg),

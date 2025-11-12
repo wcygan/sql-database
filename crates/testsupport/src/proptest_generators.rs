@@ -78,7 +78,7 @@ pub fn arb_wal_record() -> impl Strategy<Value = WalRecord> {
                     row: row.into_values(),
                     rid: common::RecordId {
                         page_id: common::PageId(page_id),
-                        slot
+                        slot,
                     },
                 }
             }
@@ -90,7 +90,7 @@ pub fn arb_wal_record() -> impl Strategy<Value = WalRecord> {
                     new_row: row.into_values(),
                     rid: common::RecordId {
                         page_id: common::PageId(page_id),
-                        slot
+                        slot,
                     },
                 }
             }
@@ -100,7 +100,7 @@ pub fn arb_wal_record() -> impl Strategy<Value = WalRecord> {
                 table: common::TableId(table_id),
                 rid: common::RecordId {
                     page_id: common::PageId(page_id),
-                    slot
+                    slot,
                 },
             }
         }),

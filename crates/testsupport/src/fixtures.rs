@@ -33,10 +33,7 @@ pub fn int_row(values: &[i64]) -> Row {
 /// assert_eq!(row.values.len(), 3);
 /// ```
 pub fn text_row(values: &[&str]) -> Row {
-    Row::new(values
-        .iter()
-        .map(|&v| Value::Text(v.to_string()))
-        .collect())
+    Row::new(values.iter().map(|&v| Value::Text(v.to_string())).collect())
 }
 
 /// Build a row with boolean values.

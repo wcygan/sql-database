@@ -13,7 +13,8 @@ async fn test_run_sql_script_basic() {
         SELECT * FROM users;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("Created table 'users'"));
     assert!(output.contains("1 row(s) affected"));
@@ -32,7 +33,8 @@ async fn test_run_sql_script_with_filter() {
         SELECT * FROM users WHERE age > 25;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("Alice"));
     assert!(!output.contains("Bob")); // Bob's age is 25, not > 25
@@ -190,7 +192,8 @@ async fn test_snapshot_testing_pattern() {
         SELECT * FROM products WHERE price > 100;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     // In real tests, you would use:
     // insta::assert_snapshot!(output);
@@ -210,7 +213,8 @@ async fn test_sql_script_create_and_drop_table() {
         DROP TABLE temp_table;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("Created table 'temp_table'"));
     assert!(output.contains("test"));
@@ -230,7 +234,8 @@ async fn test_sql_script_multiple_inserts() {
         SELECT * FROM numbers;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("Created table 'numbers'"));
     for i in 1..=5 {
@@ -250,7 +255,8 @@ async fn test_sql_script_with_filters_and_projections() {
         SELECT name FROM employees WHERE salary > 70000;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("Alice"));
     assert!(output.contains("Charlie"));
@@ -270,7 +276,8 @@ async fn test_sql_script_create_index() {
         SELECT * FROM indexed_table WHERE value = 'banana';
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("Created table 'indexed_table'"));
     assert!(output.contains("Created index 'idx_value'"));
@@ -289,7 +296,8 @@ async fn test_sql_script_drop_index() {
         DROP INDEX test_idx;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("Created table 'test_table'"));
     assert!(output.contains("Created index 'test_idx'"));
@@ -308,7 +316,8 @@ async fn test_sql_script_complex_where_clauses() {
         SELECT product FROM inventory WHERE quantity > 30;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("Widget"));
     assert!(output.contains("Gadget"));
@@ -326,7 +335,8 @@ async fn test_sql_script_with_nulls() {
         SELECT * FROM nullable_data;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("has_value"));
     assert!(output.contains("no_value"));
@@ -343,7 +353,8 @@ async fn test_sql_script_primary_key_constraint() {
         SELECT * FROM users_pk;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("Created table 'users_pk'"));
     assert!(output.contains("alice"));
@@ -362,7 +373,8 @@ async fn test_sql_script_primary_key_declared() {
         SELECT * FROM pk_test;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("Created table 'pk_test'"));
     assert!(output.contains("first"));
@@ -383,7 +395,8 @@ async fn test_sql_script_multiple_tables() {
         SELECT * FROM orders;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("Created table 'customers'"));
     assert!(output.contains("Created table 'orders'"));
@@ -401,7 +414,8 @@ async fn test_sql_script_empty_table_query() {
         SELECT * FROM empty_table;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("Created table 'empty_table'"));
     // Empty result set - just verify no errors occurred
@@ -418,7 +432,8 @@ async fn test_sql_script_boolean_columns() {
         SELECT * FROM flags WHERE active = TRUE;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("feature_a"));
     assert!(output.contains("feature_c"));
@@ -434,7 +449,8 @@ async fn test_sql_script_case_sensitivity() {
         SELECT * FROM mixedcase;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("Created table 'mixedcase'"));
     assert!(output.contains("Test"));
@@ -449,7 +465,8 @@ async fn test_sql_script_wildcard_projection() {
         SELECT * FROM all_columns;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     assert!(output.contains("test"));
     assert!(output.contains("42"));
@@ -468,7 +485,8 @@ async fn test_sql_script_sequential_operations() {
         SELECT * FROM counter;
     "#,
     )
-    .await.unwrap();
+    .await
+    .unwrap();
 
     // Verify all inserts and selects occurred
     assert!(output.contains("Created table 'counter'"));

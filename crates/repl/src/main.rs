@@ -53,21 +53,26 @@ async fn main() -> Result<()> {
         let handle = tokio::runtime::Handle::current();
         let app = tui::App::new(db, handle);
         // Run the TUI in a blocking task since it uses blocking I/O for terminal events
-        tokio::task::spawn_blocking(move || tui::run(app))
-            .await??;
+        tokio::task::spawn_blocking(move || tui::run(app)).await??;
     }
 
     Ok(())
 }
 
 async fn execute_and_exit(db: Database, sql: &str) -> Result<()> {
-    use common::{RecordBatch, pretty::{self, TableStyleKind}};
+    use common::{
+        RecordBatch,
+        pretty::{self, TableStyleKind},
+    };
 
     let result = db.execute(sql).await?;
 
     match result {
         QueryResult::Rows { schema, rows } => {
-            let batch = RecordBatch { columns: schema, rows };
+            let batch = RecordBatch {
+                columns: schema,
+                rows,
+            };
             let rendered = pretty::render_record_batch(&batch, TableStyleKind::Modern);
             println!("{}", rendered);
         }

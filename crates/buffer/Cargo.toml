@@ -11,3 +11,4 @@ hashbrown = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+testsupport = { workspace = true }

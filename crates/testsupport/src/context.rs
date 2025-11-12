@@ -23,10 +23,10 @@ use tempfile::TempDir;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use testsupport::prelude::*;
 ///
-/// let ctx = TestContext::new().unwrap();
+/// let mut ctx = TestContext::new().unwrap();
 /// let mut exec_ctx = ctx.execution_context();
 ///
 /// // Use exec_ctx for query execution
@@ -75,15 +75,15 @@ impl TestContext {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use catalog::{Catalog, Column};
     /// use types::SqlType;
     /// use testsupport::prelude::*;
     ///
     /// let mut catalog = Catalog::new();
     /// catalog.create_table("users", vec![
-    ///     Column::new("id".to_string(), SqlType::Int),
-    ///     Column::new("name".to_string(), SqlType::Text),
+    ///     Column::new("id", SqlType::Int),
+    ///     Column::new("name", SqlType::Text),
     /// ], None).unwrap();
     ///
     /// let ctx = TestContext::with_catalog(catalog).unwrap();
@@ -159,7 +159,7 @@ pub fn create_simple_catalog() -> Catalog {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use common::{Row, TableId};
 /// use types::Value;
 /// use testsupport::prelude::*;
