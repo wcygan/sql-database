@@ -4,6 +4,18 @@
 
 Implemented declarative macros in `testsupport` to replace repetitive expression helper functions in executor tests. These macros provide cleaner syntax and eliminate boilerplate for creating `ResolvedExpr` instances.
 
+## Scope and Limitations
+
+**✅ Successfully Migrated:**
+- All expression builder usage in executor tests (`lit!`, `col!`, `binary!`, `unary!`)
+- ~140 usages across `lib.rs`, `filter.rs`, `dml.rs`, and `macro_demo.rs`
+
+**⚠️ Cannot Migrate:**
+- The `test_db!`, `test_pager!`, and `test_wal!` macros cannot be used in executor tests
+- **Reason:** Circular dependency - `testsupport` depends on `executor` (for `ExecutionContext`), so executor tests cannot depend on testsupport's context helpers
+- **Solution:** Executor keeps its own `setup_context()` helper functions
+- These test setup macros are available for use in integration tests and other crates
+
 ## Macros Implemented
 
 ### 1. `lit!` - Literal Expressions
@@ -372,9 +384,12 @@ Successfully implemented 4 expression builder macros that:
 
 ✅ Replace 6 repetitive helper functions
 ✅ Provide cleaner, more expressive syntax
-✅ Maintain backward compatibility via deprecation
+✅ Migrated ~140 usages in executor tests
+✅ Removed all deprecated functions after migration
 ✅ Include comprehensive tests (18 tests total)
 ✅ Are fully documented with examples
 ✅ Integrate seamlessly with existing test infrastructure
 
-The macros are production-ready and available via `testsupport::prelude::*`.
+The expression macros (`lit!`, `col!`, `binary!`, `unary!`) are production-ready and available via `testsupport::prelude::*`.
+
+The test setup macros (`test_db!`, `test_pager!`, `test_wal!`) are available for integration tests and other crates, but not usable in executor tests due to circular dependencies.
