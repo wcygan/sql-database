@@ -18,6 +18,7 @@ pub struct App<'a> {
     pub status_message: Option<String>,
     pub execution_time: Option<Duration>,
     pub command_history: Vec<String>,
+    pub results_scroll: u16,
 }
 
 impl<'a> App<'a> {
@@ -36,10 +37,21 @@ impl<'a> App<'a> {
             status_message: None,
             execution_time: None,
             command_history: Vec::new(),
+            results_scroll: 0,
         }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+        // Scroll results with Up/Down arrows
+        if key.code == KeyCode::Up && self.results.is_some() {
+            self.results_scroll = self.results_scroll.saturating_sub(1);
+            return Ok(false);
+        }
+        if key.code == KeyCode::Down && self.results.is_some() {
+            self.results_scroll = self.results_scroll.saturating_add(1);
+            return Ok(false);
+        }
+
         // Execute SQL on Enter (without modifiers)
         if key.code == KeyCode::Enter && key.modifiers.is_empty() {
             self.execute_sql()?;
@@ -58,6 +70,7 @@ impl<'a> App<'a> {
             self.status_message = None;
             self.execution_time = None;
             self.command_history.clear();
+            self.results_scroll = 0;
             return Ok(false);
         }
 
@@ -100,6 +113,9 @@ impl<'a> App<'a> {
                 }
             }
         }
+
+        // Reset scroll position for new results
+        self.results_scroll = 0;
 
         // Clear the editor for next input
         self.editor = TextArea::default();

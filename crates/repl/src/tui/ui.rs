@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
 };
 use types::Value;
 
@@ -35,7 +35,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     // Render results
     if let Some(ref batch) = app.results {
-        render_results(f, chunks[1], batch);
+        render_results(f, chunks[1], batch, app.results_scroll);
     } else {
         let empty = Paragraph::new("No results")
             .block(Block::default().borders(Borders::ALL).title("Results"));
@@ -67,7 +67,7 @@ fn render_history(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     f.render_widget(history, area);
 }
 
-fn render_results(f: &mut Frame, area: ratatui::layout::Rect, batch: &common::RecordBatch) {
+fn render_results(f: &mut Frame, area: ratatui::layout::Rect, batch: &common::RecordBatch, scroll: u16) {
     let header_cells = batch.columns.iter().map(|c| {
         Cell::from(c.as_str()).style(
             Style::default()
@@ -77,10 +77,10 @@ fn render_results(f: &mut Frame, area: ratatui::layout::Rect, batch: &common::Re
     });
     let header = Row::new(header_cells).height(1).bottom_margin(1);
 
-    let rows = batch.rows.iter().map(|row| {
+    let rows: Vec<Row> = batch.rows.iter().map(|row| {
         let cells = row.values.iter().map(|v| Cell::from(format_value(v)));
         Row::new(cells).height(1)
-    });
+    }).collect();
 
     // Calculate column widths
     let col_count = batch.columns.len();
@@ -93,10 +93,13 @@ fn render_results(f: &mut Frame, area: ratatui::layout::Rect, batch: &common::Re
     let table = Table::new(rows, widths).header(header).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(format!("Results ({} rows)", batch.rows.len())),
+            .title(format!("Results ({} rows) - Use ↑/↓ to scroll", batch.rows.len())),
     );
 
-    f.render_widget(table, area);
+    let mut state = TableState::default();
+    state.select(Some(scroll as usize));
+
+    f.render_stateful_widget(table, area, &mut state);
 }
 
 fn render_status(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
