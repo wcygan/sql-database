@@ -201,6 +201,283 @@ fn test_snapshot_testing_pattern() {
 }
 
 #[test]
+fn test_sql_script_create_and_drop_table() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE temp_table (id INT, data TEXT);
+        INSERT INTO temp_table VALUES (1, 'test');
+        SELECT * FROM temp_table;
+        DROP TABLE temp_table;
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("Created table 'temp_table'"));
+    assert!(output.contains("test"));
+    assert!(output.contains("Dropped table 'temp_table'"));
+}
+
+#[test]
+fn test_sql_script_multiple_inserts() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE numbers (id INT, value INT);
+        INSERT INTO numbers VALUES (1, 10);
+        INSERT INTO numbers VALUES (2, 20);
+        INSERT INTO numbers VALUES (3, 30);
+        INSERT INTO numbers VALUES (4, 40);
+        INSERT INTO numbers VALUES (5, 50);
+        SELECT * FROM numbers;
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("Created table 'numbers'"));
+    for i in 1..=5 {
+        assert!(output.contains(&format!("{}", i * 10)));
+    }
+}
+
+#[test]
+fn test_sql_script_with_filters_and_projections() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE employees (id INT, name TEXT, salary INT, department TEXT);
+        INSERT INTO employees VALUES (1, 'Alice', 75000, 'Engineering');
+        INSERT INTO employees VALUES (2, 'Bob', 65000, 'Marketing');
+        INSERT INTO employees VALUES (3, 'Charlie', 80000, 'Engineering');
+        INSERT INTO employees VALUES (4, 'Diana', 70000, 'Sales');
+        SELECT name FROM employees WHERE salary > 70000;
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("Alice"));
+    assert!(output.contains("Charlie"));
+    assert!(!output.contains("Bob"));
+    assert!(!output.contains("Diana"));
+}
+
+#[test]
+fn test_sql_script_create_index() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE indexed_table (id INT, value TEXT);
+        CREATE INDEX idx_value ON indexed_table(value);
+        INSERT INTO indexed_table VALUES (1, 'apple');
+        INSERT INTO indexed_table VALUES (2, 'banana');
+        INSERT INTO indexed_table VALUES (3, 'cherry');
+        SELECT * FROM indexed_table WHERE value = 'banana';
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("Created table 'indexed_table'"));
+    assert!(output.contains("Created index 'idx_value'"));
+    assert!(output.contains("banana"));
+    assert!(!output.contains("apple"));
+    assert!(!output.contains("cherry"));
+}
+
+#[test]
+fn test_sql_script_drop_index() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE test_table (id INT, name TEXT);
+        CREATE INDEX test_idx ON test_table(name);
+        INSERT INTO test_table VALUES (1, 'test');
+        DROP INDEX test_idx;
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("Created table 'test_table'"));
+    assert!(output.contains("Created index 'test_idx'"));
+    assert!(output.contains("Dropped index 'test_idx'"));
+}
+
+#[test]
+fn test_sql_script_complex_where_clauses() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE inventory (id INT, product TEXT, quantity INT, price INT);
+        INSERT INTO inventory VALUES (1, 'Widget', 100, 5);
+        INSERT INTO inventory VALUES (2, 'Gadget', 50, 15);
+        INSERT INTO inventory VALUES (3, 'Doohickey', 75, 10);
+        INSERT INTO inventory VALUES (4, 'Thingamajig', 25, 20);
+        SELECT product FROM inventory WHERE quantity > 30;
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("Widget"));
+    assert!(output.contains("Gadget"));
+    assert!(output.contains("Doohickey"));
+    assert!(!output.contains("Thingamajig"));
+}
+
+#[test]
+fn test_sql_script_with_nulls() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE nullable_data (id INT, value TEXT, optional INT);
+        INSERT INTO nullable_data VALUES (1, 'has_value', 42);
+        INSERT INTO nullable_data VALUES (2, 'no_value', NULL);
+        SELECT * FROM nullable_data;
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("has_value"));
+    assert!(output.contains("no_value"));
+    assert!(output.contains("42"));
+}
+
+#[test]
+fn test_sql_script_primary_key_constraint() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE users_pk (id INT PRIMARY KEY, username TEXT, email TEXT);
+        INSERT INTO users_pk VALUES (1, 'alice', 'alice@example.com');
+        INSERT INTO users_pk VALUES (2, 'bob', 'bob@example.com');
+        SELECT * FROM users_pk;
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("Created table 'users_pk'"));
+    assert!(output.contains("alice"));
+    assert!(output.contains("bob"));
+}
+
+#[test]
+fn test_sql_script_primary_key_declared() {
+    // Test that tables with PRIMARY KEY declarations can be created
+    // Note: PK constraint enforcement is not yet implemented, so duplicate inserts will succeed
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE pk_test (id INT PRIMARY KEY, data TEXT);
+        INSERT INTO pk_test VALUES (1, 'first');
+        INSERT INTO pk_test VALUES (2, 'second');
+        SELECT * FROM pk_test;
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("Created table 'pk_test'"));
+    assert!(output.contains("first"));
+    assert!(output.contains("second"));
+}
+
+#[test]
+fn test_sql_script_multiple_tables() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE customers (id INT, name TEXT);
+        CREATE TABLE orders (id INT, customer_id INT, amount INT);
+        INSERT INTO customers VALUES (1, 'Alice');
+        INSERT INTO customers VALUES (2, 'Bob');
+        INSERT INTO orders VALUES (101, 1, 50);
+        INSERT INTO orders VALUES (102, 2, 75);
+        SELECT * FROM customers;
+        SELECT * FROM orders;
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("Created table 'customers'"));
+    assert!(output.contains("Created table 'orders'"));
+    assert!(output.contains("Alice"));
+    assert!(output.contains("Bob"));
+    assert!(output.contains("101"));
+    assert!(output.contains("102"));
+}
+
+#[test]
+fn test_sql_script_empty_table_query() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE empty_table (id INT, value TEXT);
+        SELECT * FROM empty_table;
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("Created table 'empty_table'"));
+    // Empty result set - just verify no errors occurred
+}
+
+#[test]
+fn test_sql_script_boolean_columns() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE flags (id INT, name TEXT, active BOOL);
+        INSERT INTO flags VALUES (1, 'feature_a', TRUE);
+        INSERT INTO flags VALUES (2, 'feature_b', FALSE);
+        INSERT INTO flags VALUES (3, 'feature_c', TRUE);
+        SELECT * FROM flags WHERE active = TRUE;
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("feature_a"));
+    assert!(output.contains("feature_c"));
+    assert!(!output.contains("feature_b"));
+}
+
+#[test]
+fn test_sql_script_case_sensitivity() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE MixedCase (Id INT, Name TEXT);
+        INSERT INTO MixedCase VALUES (1, 'Test');
+        SELECT * FROM mixedcase;
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("Created table 'mixedcase'"));
+    assert!(output.contains("Test"));
+}
+
+#[test]
+fn test_sql_script_wildcard_projection() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE all_columns (col1 INT, col2 TEXT, col3 INT, col4 BOOL);
+        INSERT INTO all_columns VALUES (1, 'test', 42, TRUE);
+        SELECT * FROM all_columns;
+    "#,
+    )
+    .unwrap();
+
+    assert!(output.contains("test"));
+    assert!(output.contains("42"));
+}
+
+#[test]
+fn test_sql_script_sequential_operations() {
+    let output = run_sql_script(
+        r#"
+        CREATE TABLE counter (id INT, count INT);
+        INSERT INTO counter VALUES (1, 0);
+        SELECT * FROM counter;
+        INSERT INTO counter VALUES (2, 1);
+        SELECT * FROM counter;
+        INSERT INTO counter VALUES (3, 2);
+        SELECT * FROM counter;
+    "#,
+    )
+    .unwrap();
+
+    // Verify all inserts and selects occurred
+    assert!(output.contains("Created table 'counter'"));
+    for i in 0..=2 {
+        assert!(output.contains(&format!("{}", i)));
+    }
+}
+
+#[test]
 fn test_multiple_statements_same_context() {
     let mut ctx = TestContext::new().unwrap();
 
