@@ -1,7 +1,7 @@
 # Tasks
 
 - [x] Fix UPDATE and DELETE paths so they actually mutate storage, emit WAL records, and add regression tests proving rows change.
-- [ ] Enforce primary-key uniqueness (schema metadata, insert-time checks, and tests that reject duplicate keys):
+- [x] Enforce primary-key uniqueness (schema metadata, insert-time checks, and tests that reject duplicate keys):
   - [x] Add `primary_key: Option<Vec<ColumnId>>` field to TableMeta with validation (catalog/src/lib.rs:304)
   - [x] Add `set_primary_key()` method with bounds/duplicate checking (catalog/src/lib.rs:346-376)
   - [x] Update `create_table()` signature to accept optional primary key (catalog/src/lib.rs:98-120)
