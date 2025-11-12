@@ -81,12 +81,7 @@ impl<'a> App<'a> {
 
     fn execute_sql(&mut self) -> Result<()> {
         // Get current input text
-        let current_input = self
-            .editor
-            .lines()
-            .join("\n")
-            .trim()
-            .to_string();
+        let current_input = self.editor.lines().join("\n").trim().to_string();
 
         if current_input.is_empty() {
             return Ok(());

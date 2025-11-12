@@ -1128,7 +1128,7 @@ mod scan;
 pub use pk_index::PrimaryKeyIndex;
 
 use catalog::Catalog;
-use common::{DbError, DbResult, Row, TableId};
+use common::{DbError, DbResult, ExecutionStats, Row, TableId};
 use planner::PhysicalPlan;
 use std::path::PathBuf;
 use storage::HeapTable;
@@ -1151,6 +1151,12 @@ pub trait Executor {
 
     /// Return the schema (column names) of rows produced by this operator.
     fn schema(&self) -> &[String];
+
+    /// Return execution statistics (for EXPLAIN ANALYZE).
+    /// Returns None for operators that don't collect statistics.
+    fn stats(&self) -> Option<&ExecutionStats> {
+        None
+    }
 }
 
 /// Shared execution context passed to all operators.

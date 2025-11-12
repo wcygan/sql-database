@@ -200,6 +200,11 @@ impl Planner {
             | Statement::DropIndex { .. } => {
                 Err(DbError::Planner("DDL handled elsewhere in v1".into()))
             }
+            Statement::Explain { query, .. } => {
+                // For EXPLAIN, just plan the inner query
+                // The analyze flag will be handled by the REPL/executor
+                Self::lower_to_logical(*query)
+            }
             Statement::Insert { table, values } => Ok(LogicalPlan::Insert { table, values }),
             Statement::Update {
                 table,

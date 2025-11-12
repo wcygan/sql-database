@@ -1,8 +1,9 @@
 //! Scan operators: SeqScan and IndexScan.
 
 use crate::{ExecutionContext, Executor};
-use common::{DbResult, PageId, RecordId, Row, TableId};
+use common::{DbResult, ExecutionStats, PageId, RecordId, Row, TableId};
 use planner::IndexPredicate;
+use std::time::Instant;
 use storage::HeapTable;
 
 /// Sequential scan operator - iterates all rows in a table.
@@ -15,6 +16,7 @@ pub struct SeqScanExec {
     current_page: PageId,
     current_slot: u16,
     num_pages: Option<u64>,
+    stats: ExecutionStats,
 }
 
 impl SeqScanExec {
@@ -26,6 +28,7 @@ impl SeqScanExec {
             current_page: PageId(0),
             current_slot: 0,
             num_pages: None,
+            stats: ExecutionStats::default(),
         }
     }
 
@@ -91,24 +94,48 @@ impl SeqScanExec {
 
 impl Executor for SeqScanExec {
     fn open(&mut self, _ctx: &mut ExecutionContext) -> DbResult<()> {
+        let start = Instant::now();
+
         // Reset state
         self.current_page = PageId(0);
         self.current_slot = 0;
         self.num_pages = None;
+        self.stats = ExecutionStats::default();
+
+        self.stats.open_time = start.elapsed();
         Ok(())
     }
 
     fn next(&mut self, ctx: &mut ExecutionContext) -> DbResult<Option<Row>> {
-        self.fetch_next_row(ctx)
+        let start = Instant::now();
+        let row = self.fetch_next_row(ctx)?;
+        self.stats.total_next_time += start.elapsed();
+
+        if row.is_some() {
+            self.stats.rows_produced += 1;
+        }
+
+        // Track pages scanned (only when we have the num_pages computed)
+        if let Some(num_pages) = self.num_pages {
+            self.stats.pages_scanned = num_pages;
+        }
+
+        Ok(row)
     }
 
     fn close(&mut self, _ctx: &mut ExecutionContext) -> DbResult<()> {
+        let start = Instant::now();
         // Nothing to clean up for seq scan
+        self.stats.close_time = start.elapsed();
         Ok(())
     }
 
     fn schema(&self) -> &[String] {
         &self.schema
+    }
+
+    fn stats(&self) -> Option<&ExecutionStats> {
+        Some(&self.stats)
     }
 }
 

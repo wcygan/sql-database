@@ -124,6 +124,12 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
             let selection = selection.map(map_expr).transpose()?;
             Ok(Statement::Delete { table, selection })
         }
+        SqlStatement::Explain {
+            statement, analyze, ..
+        } => {
+            let query = Box::new(map_statement(*statement)?);
+            Ok(Statement::Explain { query, analyze })
+        }
         _ => Err(DbError::Parser("unsupported statement".into())),
     }
 }

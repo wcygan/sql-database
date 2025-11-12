@@ -22,8 +22,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let editor_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(5),      // Command history (takes remaining space)
-            Constraint::Length(3),   // Current input (fixed 3 lines including border)
+            Constraint::Min(5),    // Command history (takes remaining space)
+            Constraint::Length(3), // Current input (fixed 3 lines including border)
         ])
         .split(chunks[0]);
 
@@ -67,7 +67,12 @@ fn render_history(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     f.render_widget(history, area);
 }
 
-fn render_results(f: &mut Frame, area: ratatui::layout::Rect, batch: &common::RecordBatch, scroll: u16) {
+fn render_results(
+    f: &mut Frame,
+    area: ratatui::layout::Rect,
+    batch: &common::RecordBatch,
+    scroll: u16,
+) {
     let header_cells = batch.columns.iter().map(|c| {
         Cell::from(c.as_str()).style(
             Style::default()
@@ -77,10 +82,14 @@ fn render_results(f: &mut Frame, area: ratatui::layout::Rect, batch: &common::Re
     });
     let header = Row::new(header_cells).height(1).bottom_margin(1);
 
-    let rows: Vec<Row> = batch.rows.iter().map(|row| {
-        let cells = row.values.iter().map(|v| Cell::from(format_value(v)));
-        Row::new(cells).height(1)
-    }).collect();
+    let rows: Vec<Row> = batch
+        .rows
+        .iter()
+        .map(|row| {
+            let cells = row.values.iter().map(|v| Cell::from(format_value(v)));
+            Row::new(cells).height(1)
+        })
+        .collect();
 
     // Calculate column widths
     let col_count = batch.columns.len();
@@ -91,9 +100,10 @@ fn render_results(f: &mut Frame, area: ratatui::layout::Rect, batch: &common::Re
     };
 
     let table = Table::new(rows, widths).header(header).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!("Results ({} rows) - Use ↑/↓ to scroll", batch.rows.len())),
+        Block::default().borders(Borders::ALL).title(format!(
+            "Results ({} rows) - Use ↑/↓ to scroll",
+            batch.rows.len()
+        )),
     );
 
     let mut state = TableState::default();

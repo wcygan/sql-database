@@ -36,6 +36,10 @@ pub enum Statement {
         table: String,
         selection: Option<Expr>,
     },
+    Explain {
+        query: Box<Statement>,
+        analyze: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]

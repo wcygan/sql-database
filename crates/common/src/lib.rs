@@ -4,7 +4,7 @@ mod tests;
 pub mod pretty;
 
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, io, path::PathBuf};
+use std::{collections::HashMap, io, path::PathBuf, time::Duration};
 use thiserror::Error;
 use types::Value;
 
@@ -172,8 +172,60 @@ impl Default for Config {
     }
 }
 
+/// Execution statistics collected during query execution for EXPLAIN ANALYZE.
+///
+/// # Examples
+/// ```
+/// use common::ExecutionStats;
+/// use std::time::Duration;
+///
+/// let stats = ExecutionStats {
+///     open_time: Duration::from_millis(5),
+///     total_next_time: Duration::from_millis(150),
+///     close_time: Duration::from_millis(2),
+///     rows_produced: 1000,
+///     rows_filtered: 500,
+///     pages_scanned: 10,
+/// };
+/// assert_eq!(stats.total_time().as_millis(), 157);
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct ExecutionStats {
+    /// Time spent in open() method
+    pub open_time: Duration,
+    /// Cumulative time spent across all next() calls
+    pub total_next_time: Duration,
+    /// Time spent in close() method
+    pub close_time: Duration,
+    /// Number of rows returned by this operator
+    pub rows_produced: u64,
+    /// Number of rows filtered out (FilterExec only)
+    pub rows_filtered: u64,
+    /// Number of pages scanned (SeqScan only)
+    pub pages_scanned: u64,
+}
+
+impl ExecutionStats {
+    /// Returns total execution time (open + next + close)
+    pub fn total_time(&self) -> Duration {
+        self.open_time + self.total_next_time + self.close_time
+    }
+
+    /// Formats duration in human-readable form (e.g., "123.45ms", "1.234s")
+    pub fn format_duration(d: Duration) -> String {
+        let micros = d.as_micros();
+        if micros < 1000 {
+            format!("{micros}µs")
+        } else if micros < 1_000_000 {
+            format!("{:.2}ms", micros as f64 / 1000.0)
+        } else {
+            format!("{:.3}s", micros as f64 / 1_000_000.0)
+        }
+    }
+}
+
 /// Convenient re-exports for downstream crates.
 pub mod prelude {
-    pub use crate::{Config, DbError, DbResult, RecordBatch, Row, RowMap};
+    pub use crate::{Config, DbError, DbResult, ExecutionStats, RecordBatch, Row, RowMap};
     pub use types::{SqlType, Value};
 }
