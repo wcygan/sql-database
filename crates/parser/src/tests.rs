@@ -657,6 +657,45 @@ fn create_table_without_primary_key() {
 }
 
 #[test]
+fn explain_select() {
+    let stmts = parse_sql("EXPLAIN SELECT * FROM users").unwrap();
+    assert_eq!(stmts.len(), 1);
+
+    match &stmts[0] {
+        Statement::Explain { query, analyze } => {
+            assert!(!analyze, "EXPLAIN should have analyze=false");
+            match &**query {
+                Statement::Select { table, .. } => {
+                    assert_eq!(table, "users");
+                }
+                _ => panic!("expected SELECT inside EXPLAIN"),
+            }
+        }
+        _ => panic!("expected EXPLAIN statement"),
+    }
+}
+
+#[test]
+fn explain_analyze_select() {
+    let stmts = parse_sql("EXPLAIN ANALYZE SELECT * FROM users WHERE id > 10").unwrap();
+    assert_eq!(stmts.len(), 1);
+
+    match &stmts[0] {
+        Statement::Explain { query, analyze } => {
+            assert!(*analyze, "EXPLAIN ANALYZE should have analyze=true");
+            match &**query {
+                Statement::Select { table, selection, .. } => {
+                    assert_eq!(table, "users");
+                    assert!(selection.is_some(), "should have WHERE clause");
+                }
+                _ => panic!("expected SELECT inside EXPLAIN ANALYZE"),
+            }
+        }
+        _ => panic!("expected EXPLAIN statement"),
+    }
+}
+
+#[test]
 fn create_table_primary_key_case_insensitive() {
     let stmts = parse_sql("CREATE TABLE users (ID INT, NAME TEXT, PRIMARY KEY (ID))").unwrap();
     assert_eq!(stmts.len(), 1);
