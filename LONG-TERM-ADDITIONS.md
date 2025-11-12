@@ -500,27 +500,41 @@ Support `CREATE VIEW active_users AS SELECT * FROM users WHERE active = true`.
 ## Observability & Debugging
 
 ### EXPLAIN and EXPLAIN ANALYZE
-**Status**: Partially Implemented
+**Status**: Foundation Implemented ✅
 **Complexity**: Medium
 **Impact**: High
 
-Currently have basic `explain_physical()`. Enhance with:
-- Estimated vs actual row counts
-- Execution time per operator
-- Memory usage per operator
-- Index usage statistics
+**Completed (commit 85a9a62):**
+- ✅ Parser support for `EXPLAIN` and `EXPLAIN ANALYZE` syntax
+- ✅ `ExecutionStats` struct in common crate (timing, row counts, pages scanned)
+- ✅ `Executor::stats()` trait method for statistics collection
+- ✅ Full instrumentation in `SeqScanExec` with `Instant` timing
+- ✅ Duration formatting helper (`format_duration()`)
+- ✅ Planner handles `Statement::Explain` by planning inner query
+
+**Remaining work:**
+- Add REPL handling to distinguish EXPLAIN vs EXPLAIN ANALYZE execution
+- Instrument remaining operators: FilterExec, ProjectExec, InsertExec, UpdateExec, DeleteExec
+- Create `explain_analyze()` formatting function to display plan with statistics
+- Add parser tests for EXPLAIN syntax variants
+- Add integration tests for end-to-end EXPLAIN ANALYZE queries
+- Track operator-specific metrics (e.g., FilterExec selectivity, hash table size for joins)
 
 **Implementation approach:**
-- Add instrumentation to all operators (start/end time, rows processed)
-- Collect statistics during execution
-- Format output as tree with timing/cardinality info
-- Add visualization (ASCII tree or JSON output)
+- Each operator tracks timing with `Instant::now()` and `elapsed()`
+- Statistics accumulated in operator fields, returned via `stats()` method
+- REPL executes query and displays results + timing for EXPLAIN ANALYZE
+- REPL displays plan without execution for plain EXPLAIN
 
 **Related files:**
-- `crates/planner/src/lib.rs` - enhance explain_physical()
-- `crates/executor/src/lib.rs` - add timing instrumentation
+- `crates/common/src/lib.rs:175-225` - ExecutionStats struct
+- `crates/parser/src/ast.rs:39-43` - Explain statement variant
+- `crates/parser/src/lib.rs:127-132` - EXPLAIN parsing
+- `crates/planner/src/lib.rs:203-207` - EXPLAIN planning
+- `crates/executor/src/lib.rs:1155-1160` - Executor::stats() trait method
+- `crates/executor/src/scan.rs:95-140` - SeqScanExec instrumentation
 
-**Educational value**: Query profiling, performance analysis, plan visualization
+**Educational value**: Query profiling, performance analysis, timing measurement, operator statistics
 
 ---
 
