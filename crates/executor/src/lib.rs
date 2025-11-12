@@ -412,6 +412,126 @@ mod tests {
         let result = execute_dml(plan, &mut ctx);
         assert!(result.is_err());
     }
+
+    /// Regression test: Verify CREATE TABLE with PRIMARY KEY stores metadata correctly
+    #[test]
+    fn create_table_with_primary_key_stores_metadata() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let mut catalog = Catalog::new();
+
+        // Create table with single-column primary key
+        let table_id = catalog
+            .create_table(
+                "users",
+                vec![
+                    Column::new("id", SqlType::Int),
+                    Column::new("name", SqlType::Text),
+                ],
+                Some(vec![0]), // PRIMARY KEY (id)
+            )
+            .unwrap();
+
+        let table = catalog.table("users").unwrap();
+        assert_eq!(table.primary_key, Some(vec![0]));
+        assert_eq!(table.id, table_id);
+    }
+
+    /// Regression test: Verify CREATE TABLE with composite PRIMARY KEY
+    #[test]
+    fn create_table_with_composite_primary_key_stores_metadata() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let mut catalog = Catalog::new();
+
+        // Create table with composite primary key
+        let table_id = catalog
+            .create_table(
+                "orders",
+                vec![
+                    Column::new("user_id", SqlType::Int),
+                    Column::new("product_id", SqlType::Int),
+                    Column::new("quantity", SqlType::Int),
+                ],
+                Some(vec![0, 1]), // PRIMARY KEY (user_id, product_id)
+            )
+            .unwrap();
+
+        let table = catalog.table("orders").unwrap();
+        assert_eq!(table.primary_key, Some(vec![0, 1]));
+        assert_eq!(table.id, table_id);
+    }
+
+    /// Regression test: Verify CREATE TABLE without PRIMARY KEY
+    #[test]
+    fn create_table_without_primary_key_has_none() {
+        use catalog::Column;
+
+        use types::SqlType;
+
+        let mut catalog = Catalog::new();
+
+        let table_id = catalog
+            .create_table(
+                "logs",
+                vec![
+                    Column::new("timestamp", SqlType::Int),
+                    Column::new("message", SqlType::Text),
+                ],
+                None, // No PRIMARY KEY
+            )
+            .unwrap();
+
+        let table = catalog.table("logs").unwrap();
+        assert_eq!(table.primary_key, None);
+        assert_eq!(table.id, table_id);
+    }
+
+    /// Regression test: Verify PRIMARY KEY with invalid column ordinal is rejected
+    #[test]
+    fn create_table_rejects_invalid_primary_key_ordinal() {
+        use catalog::Column;
+
+        use types::SqlType;
+
+        let mut catalog = Catalog::new();
+
+        let result = catalog.create_table(
+            "users",
+            vec![
+                Column::new("id", SqlType::Int),
+                Column::new("name", SqlType::Text),
+            ],
+            Some(vec![5]), // Column 5 doesn't exist
+        );
+
+        assert!(result.is_err());
+        assert!(format!("{:?}", result).contains("out of bounds"));
+    }
+
+    /// Regression test: Verify PRIMARY KEY with duplicate columns is rejected
+    #[test]
+    fn create_table_rejects_duplicate_primary_key_columns() {
+        use catalog::Column;
+
+        use types::SqlType;
+
+        let mut catalog = Catalog::new();
+
+        let result = catalog.create_table(
+            "users",
+            vec![
+                Column::new("id", SqlType::Int),
+                Column::new("name", SqlType::Text),
+            ],
+            Some(vec![0, 0]), // Duplicate column 0
+        );
+
+        assert!(result.is_err());
+        assert!(format!("{:?}", result).contains("duplicate"));
+    }
 }
 
 mod builder;

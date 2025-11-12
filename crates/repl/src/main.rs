@@ -101,7 +101,11 @@ impl App {
 
     fn execute_statement(&mut self, stmt: Statement) -> Result<()> {
         match stmt {
-            Statement::CreateTable { name, columns } => self.create_table(name, columns),
+            Statement::CreateTable {
+                name,
+                columns,
+                primary_key,
+            } => self.create_table(name, columns, primary_key),
             Statement::DropTable { name } => self.drop_table(name),
             Statement::CreateIndex {
                 name,
@@ -113,21 +117,46 @@ impl App {
         }
     }
 
-    fn create_table(&mut self, name: String, columns: Vec<ColumnDef>) -> Result<()> {
-        let catalog_columns = columns
-            .into_iter()
+    fn create_table(
+        &mut self,
+        name: String,
+        columns: Vec<ColumnDef>,
+        primary_key: Option<Vec<String>>,
+    ) -> Result<()> {
+        let catalog_columns: Vec<Column> = columns
+            .iter()
             .map(|col| {
                 let ty = map_sql_type(&col.ty).with_context(|| {
                     format!("unknown type '{}' for column {}", col.ty, col.name)
                 })?;
-                Ok(Column::new(col.name, ty))
+                Ok(Column::new(col.name.clone(), ty))
             })
             .collect::<Result<Vec<_>>>()?;
+
+        // Convert primary key column names to ordinals
+        let primary_key_ordinals = if let Some(pk_names) = primary_key {
+            let mut ordinals = Vec::new();
+            for pk_name in &pk_names {
+                let ordinal = columns
+                    .iter()
+                    .position(|col| col.name.eq_ignore_ascii_case(pk_name))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "PRIMARY KEY column '{}' not found in table columns",
+                            pk_name
+                        )
+                    })? as u16;
+                ordinals.push(ordinal);
+            }
+            Some(ordinals)
+        } else {
+            None
+        };
 
         let table_id = self
             .state
             .catalog
-            .create_table(&name, catalog_columns, None)
+            .create_table(&name, catalog_columns, primary_key_ordinals)
             .map_err(anyhow::Error::from)?;
         self.state.persist_catalog()?;
         self.state.log_wal(WalRecord::CreateTable {
