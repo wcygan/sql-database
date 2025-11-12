@@ -45,3 +45,8 @@ anyhow = "1.0.100"
 clap = { version = "4.5.51", features = ["derive"] }
 tabled = "0.20.0"
 rustyline = "13.0.0"
+ratatui = "0.28"
+crossterm = "0.28"
+tui-textarea = "0.6"
+syntect = { version = "5.2", default-features = false, features = ["parsing", "regex-fancy"] }
+arboard = "3.4"
