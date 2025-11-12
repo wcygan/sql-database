@@ -10,6 +10,8 @@ members = [
     "crates/wal",
     "crates/planner",
     "crates/executor",
+    "crates/database",
+    "crates/protocol",
     "crates/wal-viewer",
     "crates/repl",
     "crates/testsupport",
@@ -21,10 +23,12 @@ resolver = "2"
 buffer = { path = "crates/buffer" }
 catalog = { path = "crates/catalog" }
 common = { path = "crates/common" }
+database = { path = "crates/database" }
 executor = { path = "crates/executor" }
 expr = { path = "crates/expr" }
 parser = { path = "crates/parser" }
 planner = { path = "crates/planner" }
+protocol = { path = "crates/protocol" }
 storage = { path = "crates/storage" }
 types = { path = "crates/types" }
 wal = { path = "crates/wal" }
@@ -54,3 +58,4 @@ crossterm = "0.28"
 tui-textarea = "0.6"
 syntect = { version = "5.2", default-features = false, features = ["parsing", "regex-fancy"] }
 arboard = "3.4"
+tokio = { version = "1.40", features = ["rt", "rt-multi-thread", "sync", "macros", "fs"] }

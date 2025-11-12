@@ -1,18 +1,12 @@
-use crate::database::DatabaseState;
-use anyhow::{Context, Result};
-use catalog::Column;
+use anyhow::Result;
 use common::RecordBatch;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use executor::{execute_dml, execute_query};
-use parser::{ColumnDef, Statement, parse_sql};
-use planner::{PhysicalPlan, Planner, PlanningContext};
+use database::{Database, QueryResult};
 use std::time::{Duration, Instant};
 use tui_textarea::TextArea;
-use types::SqlType;
-use wal::WalRecord;
 
 pub struct App<'a> {
-    pub db: DatabaseState,
+    pub db: Database,
     pub editor: TextArea<'a>,
     pub results: Option<RecordBatch>,
     pub status_message: Option<String>,
@@ -22,7 +16,7 @@ pub struct App<'a> {
 }
 
 impl<'a> App<'a> {
-    pub fn new(db: DatabaseState) -> Self {
+    pub fn new(db: Database) -> Self {
         let mut editor = TextArea::default();
         editor.set_block(
             ratatui::widgets::Block::default()
@@ -124,220 +118,23 @@ impl<'a> App<'a> {
     }
 
     fn execute_sql_inner(&mut self, sql: &str) -> Result<()> {
-        let statements = parse_sql(sql).map_err(anyhow::Error::from)?;
+        let result = tokio::runtime::Handle::current().block_on(self.db.execute(sql))?;
 
-        for stmt in statements {
-            match stmt {
-                Statement::CreateTable {
-                    name,
-                    columns,
-                    primary_key,
-                } => self.create_table(name, columns, primary_key)?,
-                Statement::DropTable { name } => self.drop_table(name)?,
-                Statement::CreateIndex {
-                    name,
-                    table,
-                    column,
-                } => self.create_index(name, table, column)?,
-                Statement::DropIndex { name } => self.drop_index(name)?,
-                Statement::Explain { query, analyze } => self.execute_explain(*query, analyze)?,
-                other => self.execute_planned(other)?,
-            }
-        }
-
-        Ok(())
-    }
-
-    fn create_table(
-        &mut self,
-        name: String,
-        columns: Vec<ColumnDef>,
-        primary_key: Option<Vec<String>>,
-    ) -> Result<()> {
-        let catalog_columns: Vec<Column> = columns
-            .iter()
-            .map(|col| {
-                let ty = map_sql_type(&col.ty).with_context(|| {
-                    format!("unknown type '{}' for column {}", col.ty, col.name)
-                })?;
-                Ok(Column::new(col.name.clone(), ty))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        let primary_key_ordinals = if let Some(pk_names) = primary_key {
-            let mut ordinals = Vec::new();
-            for pk_name in &pk_names {
-                let ordinal = columns
-                    .iter()
-                    .position(|col| col.name.eq_ignore_ascii_case(pk_name))
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "PRIMARY KEY column '{}' not found in table columns",
-                            pk_name
-                        )
-                    })? as u16;
-                ordinals.push(ordinal);
-            }
-            Some(ordinals)
-        } else {
-            None
-        };
-
-        let table_id = self
-            .db
-            .catalog
-            .create_table(&name, catalog_columns, primary_key_ordinals)
-            .map_err(anyhow::Error::from)?;
-        self.db.persist_catalog()?;
-        self.db.log_wal(WalRecord::CreateTable {
-            name: name.clone(),
-            table: table_id,
-        })?;
-
-        self.results = None;
-        self.status_message = Some(format!("Created table '{}' (id = {})", name, table_id.0));
-        Ok(())
-    }
-
-    fn drop_table(&mut self, name: String) -> Result<()> {
-        let table_id = self
-            .db
-            .catalog
-            .table(&name)
-            .map_err(anyhow::Error::from)?
-            .id;
-        self.db
-            .catalog
-            .drop_table(&name)
-            .map_err(anyhow::Error::from)?;
-        self.db.persist_catalog()?;
-        self.db.remove_heap_file(&name)?;
-        self.db.log_wal(WalRecord::DropTable { table: table_id })?;
-
-        self.results = None;
-        self.status_message = Some(format!("Dropped table '{}'", name));
-        Ok(())
-    }
-
-    fn create_index(&mut self, name: String, table: String, column: String) -> Result<()> {
-        use catalog::IndexKind;
-        self.db
-            .catalog
-            .create_index()
-            .table_name(&table)
-            .index_name(&name)
-            .columns(&[column.as_str()])
-            .kind(IndexKind::BTree)
-            .call()
-            .map_err(anyhow::Error::from)?;
-        self.db.persist_catalog()?;
-
-        self.results = None;
-        self.status_message = Some(format!("Created index '{}' on '{}'", name, table));
-        Ok(())
-    }
-
-    fn drop_index(&mut self, name: String) -> Result<()> {
-        let table_name = self
-            .db
-            .catalog
-            .tables()
-            .find(|table| table.index(&name).is_ok())
-            .map(|table| table.name.clone())
-            .ok_or_else(|| anyhow::anyhow!("index '{}' not found", name))?;
-
-        self.db
-            .catalog
-            .drop_index(&table_name, &name)
-            .map_err(anyhow::Error::from)?;
-        self.db.persist_catalog()?;
-
-        self.results = None;
-        self.status_message = Some(format!("Dropped index '{}' on '{}'", name, table_name));
-        Ok(())
-    }
-
-    fn execute_explain(&mut self, query: Statement, analyze: bool) -> Result<()> {
-        let mut planning_ctx = PlanningContext::new(&self.db.catalog);
-        let plan = Planner::plan(query, &mut planning_ctx).map_err(anyhow::Error::from)?;
-
-        if analyze {
-            // EXPLAIN ANALYZE: Execute and show statistics
-            let plan_description = planner::explain_physical(&plan);
-
-            let stats_output = self.db.with_execution_context(|ctx| {
-                let mut executor = executor::build_executor(plan)?;
-                executor.open(ctx)?;
-
-                // Consume all rows to collect statistics
-                let mut row_count = 0;
-                while executor.next(ctx)?.is_some() {
-                    row_count += 1;
-                }
-                executor.close(ctx)?;
-
-                // Format statistics
-                let stats = executor::format_explain_analyze(executor.as_ref(), "Query");
-                Ok::<String, common::DbError>(format!(
-                    "EXPLAIN ANALYZE:\n{}\n\nExecution Statistics:\n{}\nTotal rows: {}",
-                    plan_description, stats, row_count
-                ))
-            })?;
-
-            // Display as single-column result
-            let rows = stats_output
-                .lines()
-                .map(|line| common::Row::new(vec![types::Value::Text(line.to_string())]))
-                .collect();
-
-            self.results = Some(RecordBatch {
-                columns: vec!["Plan".to_string()],
-                rows,
-            });
-            self.status_message = None;
-        } else {
-            // EXPLAIN: Just show the plan
-            let plan_description = planner::explain_physical(&plan);
-            let rows = plan_description
-                .lines()
-                .map(|line| common::Row::new(vec![types::Value::Text(line.to_string())]))
-                .collect();
-
-            self.results = Some(RecordBatch {
-                columns: vec!["Plan".to_string()],
-                rows,
-            });
-            self.status_message = None;
-        }
-
-        Ok(())
-    }
-
-    fn execute_planned(&mut self, stmt: Statement) -> Result<()> {
-        let mut planning_ctx = PlanningContext::new(&self.db.catalog);
-        let plan = Planner::plan(stmt, &mut planning_ctx).map_err(anyhow::Error::from)?;
-
-        match plan {
-            PhysicalPlan::Insert { .. }
-            | PhysicalPlan::Update { .. }
-            | PhysicalPlan::Delete { .. } => {
-                let count = self
-                    .db
-                    .with_execution_context(|ctx| execute_dml(plan, ctx))?;
-                self.results = None;
-                self.status_message = Some(format!("{} row(s) affected", count));
-            }
-            other => {
-                let schema = infer_schema(&other);
-                let rows = self
-                    .db
-                    .with_execution_context(|ctx| execute_query(other, ctx))?;
-                let batch = RecordBatch {
+        match result {
+            QueryResult::Rows { schema, rows } => {
+                self.results = Some(RecordBatch {
                     columns: schema,
                     rows,
-                };
-                self.results = Some(batch);
+                });
                 self.status_message = None;
+            }
+            QueryResult::Count { affected } => {
+                self.results = None;
+                self.status_message = Some(format!("{} row(s) affected", affected));
+            }
+            QueryResult::Empty => {
+                self.results = None;
+                self.status_message = Some("Success".to_string());
             }
         }
 
@@ -379,7 +176,9 @@ impl<'a> App<'a> {
                 self.execution_time = None;
             }
             ".tables" => {
-                let summaries = self.db.catalog.table_summaries();
+                let catalog = self.db.catalog();
+                let catalog_lock = catalog.blocking_read();
+                let summaries = catalog_lock.table_summaries();
                 if summaries.is_empty() {
                     self.results = None;
                     self.status_message = Some("No tables found".to_string());
@@ -418,7 +217,9 @@ impl<'a> App<'a> {
                     self.status_message = Some("Usage: .schema <table>".to_string());
                 } else {
                     let table_name = parts[1];
-                    match self.db.catalog.table(table_name) {
+                    let catalog = self.db.catalog();
+                    let catalog_lock = catalog.blocking_read();
+                    match catalog_lock.table(table_name) {
                         Ok(table) => {
                             let rows: Vec<common::Row> = table
                                 .schema
@@ -448,7 +249,7 @@ impl<'a> App<'a> {
                 self.execution_time = None;
             }
             ".reset" => {
-                match self.db.reset() {
+                match tokio::runtime::Handle::current().block_on(self.db.reset()) {
                     Ok(()) => {
                         self.results = None;
                         self.status_message =
@@ -506,28 +307,5 @@ impl<'a> App<'a> {
         }
 
         Ok(())
-    }
-}
-
-fn map_sql_type(raw: &str) -> Result<SqlType> {
-    match raw.trim().to_uppercase().as_str() {
-        "INT" | "INTEGER" => Ok(SqlType::Int),
-        "TEXT" | "STRING" | "VARCHAR" => Ok(SqlType::Text),
-        "BOOL" | "BOOLEAN" => Ok(SqlType::Bool),
-        other => Err(anyhow::anyhow!("unsupported SQL type '{}'", other)),
-    }
-}
-
-fn infer_schema(plan: &PhysicalPlan) -> Vec<String> {
-    match plan {
-        PhysicalPlan::SeqScan { schema, .. } => schema.clone(),
-        PhysicalPlan::IndexScan { schema, .. } => schema.clone(),
-        PhysicalPlan::Filter { input, .. } => infer_schema(input),
-        PhysicalPlan::Project { columns, .. } => {
-            columns.iter().map(|(name, _)| name.clone()).collect()
-        }
-        PhysicalPlan::Insert { .. } | PhysicalPlan::Update { .. } | PhysicalPlan::Delete { .. } => {
-            vec![]
-        }
     }
 }

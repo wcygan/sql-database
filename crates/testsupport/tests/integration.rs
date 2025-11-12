@@ -3,8 +3,8 @@
 use testsupport::prelude::*;
 use types::Value;
 
-#[test]
-fn test_run_sql_script_basic() {
+#[tokio::test]
+async fn test_run_sql_script_basic() {
     let output = run_sql_script(
         r#"
         CREATE TABLE users (id INT, name TEXT, age INT);
@@ -13,7 +13,7 @@ fn test_run_sql_script_basic() {
         SELECT * FROM users;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("Created table 'users'"));
     assert!(output.contains("1 row(s) affected"));
@@ -21,8 +21,8 @@ fn test_run_sql_script_basic() {
     assert!(output.contains("Bob"));
 }
 
-#[test]
-fn test_run_sql_script_with_filter() {
+#[tokio::test]
+async fn test_run_sql_script_with_filter() {
     let output = run_sql_script(
         r#"
         CREATE TABLE users (id INT, name TEXT, age INT);
@@ -32,15 +32,15 @@ fn test_run_sql_script_with_filter() {
         SELECT * FROM users WHERE age > 25;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("Alice"));
     assert!(!output.contains("Bob")); // Bob's age is 25, not > 25
     assert!(output.contains("Charlie"));
 }
 
-#[test]
-fn test_test_context_isolation() {
+#[tokio::test]
+async fn test_test_context_isolation() {
     use catalog::Column;
     use types::SqlType;
 
@@ -67,8 +67,8 @@ fn test_test_context_isolation() {
     assert!(ctx2.catalog().table("users").is_err());
 }
 
-#[test]
-fn test_fixtures_and_assertions() {
+#[tokio::test]
+async fn test_fixtures_and_assertions() {
     use common::TableId;
 
     // Create a table using simple catalog helper
@@ -97,8 +97,8 @@ fn test_fixtures_and_assertions() {
     assert_row_sets_equal(&rows, &rows);
 }
 
-#[test]
-fn test_row_builders() {
+#[tokio::test]
+async fn test_row_builders() {
     let int_r = int_row(&[1, 2, 3]);
     assert_eq!(int_r.values.len(), 3);
     assert_eq!(int_r.values[0], Value::Int(1));
@@ -116,8 +116,8 @@ fn test_row_builders() {
     assert_eq!(null_r.values[0], Value::Null);
 }
 
-#[test]
-fn test_expression_builders() {
+#[tokio::test]
+async fn test_expression_builders() {
     use expr::BinaryOp;
 
     let lit = lit_int(42);
@@ -139,8 +139,8 @@ fn test_expression_builders() {
     }
 }
 
-#[test]
-fn test_sample_data() {
+#[tokio::test]
+async fn test_sample_data() {
     use testsupport::fixtures::data::*;
 
     let users = sample_users();
@@ -154,8 +154,8 @@ fn test_sample_data() {
     assert_eq!(orders.len(), 3);
 }
 
-#[test]
-fn test_schemas() {
+#[tokio::test]
+async fn test_schemas() {
     use testsupport::fixtures::schemas::*;
 
     let users = users_schema();
@@ -168,8 +168,8 @@ fn test_schemas() {
     assert_eq!(orders.columns().len(), 4);
 }
 
-#[test]
-fn test_error_assertions() {
+#[tokio::test]
+async fn test_error_assertions() {
     use common::DbError;
 
     let result: Result<(), DbError> = Err(DbError::Executor("test error".into()));
@@ -179,8 +179,8 @@ fn test_error_assertions() {
     assert_executor_error(result2, "table not found");
 }
 
-#[test]
-fn test_snapshot_testing_pattern() {
+#[tokio::test]
+async fn test_snapshot_testing_pattern() {
     // This demonstrates the intended usage pattern with insta
     let output = run_sql_script(
         r#"
@@ -190,7 +190,7 @@ fn test_snapshot_testing_pattern() {
         SELECT * FROM products WHERE price > 100;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     // In real tests, you would use:
     // insta::assert_snapshot!(output);
@@ -200,8 +200,8 @@ fn test_snapshot_testing_pattern() {
     assert!(!output.contains("Mouse")); // Mouse price is 25, not > 100
 }
 
-#[test]
-fn test_sql_script_create_and_drop_table() {
+#[tokio::test]
+async fn test_sql_script_create_and_drop_table() {
     let output = run_sql_script(
         r#"
         CREATE TABLE temp_table (id INT, data TEXT);
@@ -210,15 +210,15 @@ fn test_sql_script_create_and_drop_table() {
         DROP TABLE temp_table;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("Created table 'temp_table'"));
     assert!(output.contains("test"));
     assert!(output.contains("Dropped table 'temp_table'"));
 }
 
-#[test]
-fn test_sql_script_multiple_inserts() {
+#[tokio::test]
+async fn test_sql_script_multiple_inserts() {
     let output = run_sql_script(
         r#"
         CREATE TABLE numbers (id INT, value INT);
@@ -230,7 +230,7 @@ fn test_sql_script_multiple_inserts() {
         SELECT * FROM numbers;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("Created table 'numbers'"));
     for i in 1..=5 {
@@ -238,8 +238,8 @@ fn test_sql_script_multiple_inserts() {
     }
 }
 
-#[test]
-fn test_sql_script_with_filters_and_projections() {
+#[tokio::test]
+async fn test_sql_script_with_filters_and_projections() {
     let output = run_sql_script(
         r#"
         CREATE TABLE employees (id INT, name TEXT, salary INT, department TEXT);
@@ -250,7 +250,7 @@ fn test_sql_script_with_filters_and_projections() {
         SELECT name FROM employees WHERE salary > 70000;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("Alice"));
     assert!(output.contains("Charlie"));
@@ -258,8 +258,8 @@ fn test_sql_script_with_filters_and_projections() {
     assert!(!output.contains("Diana"));
 }
 
-#[test]
-fn test_sql_script_create_index() {
+#[tokio::test]
+async fn test_sql_script_create_index() {
     let output = run_sql_script(
         r#"
         CREATE TABLE indexed_table (id INT, value TEXT);
@@ -270,7 +270,7 @@ fn test_sql_script_create_index() {
         SELECT * FROM indexed_table WHERE value = 'banana';
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("Created table 'indexed_table'"));
     assert!(output.contains("Created index 'idx_value'"));
@@ -279,8 +279,8 @@ fn test_sql_script_create_index() {
     assert!(!output.contains("cherry"));
 }
 
-#[test]
-fn test_sql_script_drop_index() {
+#[tokio::test]
+async fn test_sql_script_drop_index() {
     let output = run_sql_script(
         r#"
         CREATE TABLE test_table (id INT, name TEXT);
@@ -289,15 +289,15 @@ fn test_sql_script_drop_index() {
         DROP INDEX test_idx;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("Created table 'test_table'"));
     assert!(output.contains("Created index 'test_idx'"));
     assert!(output.contains("Dropped index 'test_idx'"));
 }
 
-#[test]
-fn test_sql_script_complex_where_clauses() {
+#[tokio::test]
+async fn test_sql_script_complex_where_clauses() {
     let output = run_sql_script(
         r#"
         CREATE TABLE inventory (id INT, product TEXT, quantity INT, price INT);
@@ -308,7 +308,7 @@ fn test_sql_script_complex_where_clauses() {
         SELECT product FROM inventory WHERE quantity > 30;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("Widget"));
     assert!(output.contains("Gadget"));
@@ -316,8 +316,8 @@ fn test_sql_script_complex_where_clauses() {
     assert!(!output.contains("Thingamajig"));
 }
 
-#[test]
-fn test_sql_script_with_nulls() {
+#[tokio::test]
+async fn test_sql_script_with_nulls() {
     let output = run_sql_script(
         r#"
         CREATE TABLE nullable_data (id INT, value TEXT, optional INT);
@@ -326,15 +326,15 @@ fn test_sql_script_with_nulls() {
         SELECT * FROM nullable_data;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("has_value"));
     assert!(output.contains("no_value"));
     assert!(output.contains("42"));
 }
 
-#[test]
-fn test_sql_script_primary_key_constraint() {
+#[tokio::test]
+async fn test_sql_script_primary_key_constraint() {
     let output = run_sql_script(
         r#"
         CREATE TABLE users_pk (id INT PRIMARY KEY, username TEXT, email TEXT);
@@ -343,15 +343,15 @@ fn test_sql_script_primary_key_constraint() {
         SELECT * FROM users_pk;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("Created table 'users_pk'"));
     assert!(output.contains("alice"));
     assert!(output.contains("bob"));
 }
 
-#[test]
-fn test_sql_script_primary_key_declared() {
+#[tokio::test]
+async fn test_sql_script_primary_key_declared() {
     // Test that tables with PRIMARY KEY declarations can be created
     // Note: PK constraint enforcement is not yet implemented, so duplicate inserts will succeed
     let output = run_sql_script(
@@ -362,15 +362,15 @@ fn test_sql_script_primary_key_declared() {
         SELECT * FROM pk_test;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("Created table 'pk_test'"));
     assert!(output.contains("first"));
     assert!(output.contains("second"));
 }
 
-#[test]
-fn test_sql_script_multiple_tables() {
+#[tokio::test]
+async fn test_sql_script_multiple_tables() {
     let output = run_sql_script(
         r#"
         CREATE TABLE customers (id INT, name TEXT);
@@ -383,7 +383,7 @@ fn test_sql_script_multiple_tables() {
         SELECT * FROM orders;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("Created table 'customers'"));
     assert!(output.contains("Created table 'orders'"));
@@ -393,22 +393,22 @@ fn test_sql_script_multiple_tables() {
     assert!(output.contains("102"));
 }
 
-#[test]
-fn test_sql_script_empty_table_query() {
+#[tokio::test]
+async fn test_sql_script_empty_table_query() {
     let output = run_sql_script(
         r#"
         CREATE TABLE empty_table (id INT, value TEXT);
         SELECT * FROM empty_table;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("Created table 'empty_table'"));
     // Empty result set - just verify no errors occurred
 }
 
-#[test]
-fn test_sql_script_boolean_columns() {
+#[tokio::test]
+async fn test_sql_script_boolean_columns() {
     let output = run_sql_script(
         r#"
         CREATE TABLE flags (id INT, name TEXT, active BOOL);
@@ -418,15 +418,15 @@ fn test_sql_script_boolean_columns() {
         SELECT * FROM flags WHERE active = TRUE;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("feature_a"));
     assert!(output.contains("feature_c"));
     assert!(!output.contains("feature_b"));
 }
 
-#[test]
-fn test_sql_script_case_sensitivity() {
+#[tokio::test]
+async fn test_sql_script_case_sensitivity() {
     let output = run_sql_script(
         r#"
         CREATE TABLE MixedCase (Id INT, Name TEXT);
@@ -434,14 +434,14 @@ fn test_sql_script_case_sensitivity() {
         SELECT * FROM mixedcase;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("Created table 'mixedcase'"));
     assert!(output.contains("Test"));
 }
 
-#[test]
-fn test_sql_script_wildcard_projection() {
+#[tokio::test]
+async fn test_sql_script_wildcard_projection() {
     let output = run_sql_script(
         r#"
         CREATE TABLE all_columns (col1 INT, col2 TEXT, col3 INT, col4 BOOL);
@@ -449,14 +449,14 @@ fn test_sql_script_wildcard_projection() {
         SELECT * FROM all_columns;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     assert!(output.contains("test"));
     assert!(output.contains("42"));
 }
 
-#[test]
-fn test_sql_script_sequential_operations() {
+#[tokio::test]
+async fn test_sql_script_sequential_operations() {
     let output = run_sql_script(
         r#"
         CREATE TABLE counter (id INT, count INT);
@@ -468,7 +468,7 @@ fn test_sql_script_sequential_operations() {
         SELECT * FROM counter;
     "#,
     )
-    .unwrap();
+    .await.unwrap();
 
     // Verify all inserts and selects occurred
     assert!(output.contains("Created table 'counter'"));
@@ -477,8 +477,8 @@ fn test_sql_script_sequential_operations() {
     }
 }
 
-#[test]
-fn test_multiple_statements_same_context() {
+#[tokio::test]
+async fn test_multiple_statements_same_context() {
     let mut ctx = TestContext::new().unwrap();
 
     // First statement creates table
@@ -486,7 +486,7 @@ fn test_multiple_statements_same_context() {
         "CREATE TABLE users (id INT, name TEXT);",
         &mut ctx,
     )
-    .unwrap();
+    .await.unwrap();
     assert!(output1.contains("Created table 'users'"));
 
     // Second statement inserts data
@@ -494,11 +494,11 @@ fn test_multiple_statements_same_context() {
         "INSERT INTO users VALUES (1, 'Alice');",
         &mut ctx,
     )
-    .unwrap();
+    .await.unwrap();
     assert!(output2.contains("1 row(s) affected"));
 
     // Third statement queries data
-    let output3 = run_sql_script_with_context("SELECT * FROM users;", &mut ctx).unwrap();
+    let output3 = run_sql_script_with_context("SELECT * FROM users;", &mut ctx).await.unwrap();
     assert!(output3.contains("Alice"));
 }
 

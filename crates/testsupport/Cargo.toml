@@ -8,6 +8,7 @@ edition = "2021"
 common = { workspace = true }
 types = { workspace = true }
 catalog = { workspace = true }
+database = { workspace = true }
 parser = { workspace = true }
 planner = { workspace = true }
 executor = { workspace = true }
@@ -24,3 +25,4 @@ pretty_assertions = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 bincode = { workspace = true }
+tokio = { workspace = true }

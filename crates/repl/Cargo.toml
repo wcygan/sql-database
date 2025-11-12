@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+database = { workspace = true }
 parser = { workspace = true }
 planner = { workspace = true }
 executor = { workspace = true }
@@ -20,3 +21,4 @@ crossterm = { workspace = true }
 tui-textarea = { workspace = true }
 syntect = { workspace = true }
 arboard = { workspace = true }
+tokio = { workspace = true }

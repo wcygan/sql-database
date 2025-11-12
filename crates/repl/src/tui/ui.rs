@@ -137,7 +137,7 @@ fn render_status(f: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         Span::raw("Status: "),
         Span::styled(status_text, status_style),
         Span::raw(" | "),
-        Span::raw(format!("Database: {}", app.db.data_dir.display())),
+        Span::raw(format!("Database: {}", app.db.data_dir().display())),
     ]))
     .block(Block::default().borders(Borders::ALL).title("Status"));
 

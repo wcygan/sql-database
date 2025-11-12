@@ -1,0 +1,16 @@
+[package]
+name = "database"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+catalog = { workspace = true }
+common = { workspace = true }
+buffer = { workspace = true }
+parser = { workspace = true }
+planner = { workspace = true }
+executor = { workspace = true }
+types = { workspace = true }
+wal = { workspace = true }
+tokio = { workspace = true }
