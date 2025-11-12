@@ -914,13 +914,207 @@ mod tests {
         // Update non-PK columns (should succeed)
         let update_plan = PhysicalPlan::Update {
             table_id,
-            assignments: vec![(1, lit_text("bob")), (2, ResolvedExpr::Literal(Value::Bool(false)))],
+            assignments: vec![
+                (1, lit_text("bob")),
+                (2, ResolvedExpr::Literal(Value::Bool(false))),
+            ],
             predicate: Some(ResolvedExpr::Literal(Value::Bool(true))),
         };
         let result = execute_dml(update_plan, &mut ctx);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 1);
+    }
+
+    #[test]
+    fn delete_removes_pk_entry_allowing_reinsertion() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::new();
+        catalog
+            .create_table(
+                "users",
+                vec![
+                    Column::new("id", SqlType::Int),
+                    Column::new("name", SqlType::Text),
+                    Column::new("active", SqlType::Bool),
+                ],
+                Some(vec![0]), // PRIMARY KEY (id)
+            )
+            .unwrap();
+
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(
+            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+        ));
+        let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+        let table_id = TableId(1);
+
+        // Insert a row with id=1
+        let insert_plan1 = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("alice"),
+                ResolvedExpr::Literal(Value::Bool(true)),
+            ],
+        };
+        assert!(execute_dml(insert_plan1, &mut ctx).is_ok());
+
+        // Delete the row
+        let delete_plan = PhysicalPlan::Delete {
+            table_id,
+            predicate: Some(ResolvedExpr::Literal(Value::Bool(true))),
+        };
+        let count = execute_dml(delete_plan, &mut ctx).unwrap();
+        assert_eq!(count, 1);
+
+        // Reinsert with same id=1 should now succeed
+        let insert_plan2 = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("bob"),
+                ResolvedExpr::Literal(Value::Bool(false)),
+            ],
+        };
+        let result = execute_dml(insert_plan2, &mut ctx);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn delete_removes_composite_pk_entry() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::new();
+        catalog
+            .create_table(
+                "users",
+                vec![
+                    Column::new("id", SqlType::Int),
+                    Column::new("name", SqlType::Text),
+                    Column::new("active", SqlType::Bool),
+                ],
+                Some(vec![0, 1]), // PRIMARY KEY (id, name)
+            )
+            .unwrap();
+
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(
+            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+        ));
+        let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+        let table_id = TableId(1);
+
+        // Insert row with (id=1, name="alice")
+        let insert_plan1 = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("alice"),
+                ResolvedExpr::Literal(Value::Bool(true)),
+            ],
+        };
+        assert!(execute_dml(insert_plan1, &mut ctx).is_ok());
+
+        // Delete the row
+        let delete_plan = PhysicalPlan::Delete {
+            table_id,
+            predicate: Some(ResolvedExpr::Literal(Value::Bool(true))),
+        };
+        let count = execute_dml(delete_plan, &mut ctx).unwrap();
+        assert_eq!(count, 1);
+
+        // Reinsert with same composite PK (1, "alice") should succeed
+        let insert_plan2 = PhysicalPlan::Insert {
+            table_id,
+            values: vec![
+                lit_int(1),
+                lit_text("alice"),
+                ResolvedExpr::Literal(Value::Bool(false)),
+            ],
+        };
+        let result = execute_dml(insert_plan2, &mut ctx);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn delete_selective_removal_from_pk_index() {
+        use catalog::Column;
+        use types::SqlType;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::new();
+        catalog
+            .create_table(
+                "users",
+                vec![
+                    Column::new("id", SqlType::Int),
+                    Column::new("name", SqlType::Text),
+                    Column::new("active", SqlType::Bool),
+                ],
+                Some(vec![0]), // PRIMARY KEY (id)
+            )
+            .unwrap();
+
+        let catalog = Box::leak(Box::new(catalog));
+        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(
+            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+        ));
+        let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+
+        let table_id = TableId(1);
+
+        // Insert three rows
+        for (id, name) in &[(1, "alice"), (2, "bob"), (3, "carol")] {
+            let plan = PhysicalPlan::Insert {
+                table_id,
+                values: vec![
+                    lit_int(*id),
+                    lit_text(name),
+                    ResolvedExpr::Literal(Value::Bool(true)),
+                ],
+            };
+            assert!(execute_dml(plan, &mut ctx).is_ok());
+        }
+
+        // Delete all rows where active=true (all three have active=true)
+        let delete_plan = PhysicalPlan::Delete {
+            table_id,
+            predicate: Some(ResolvedExpr::Column(2)), // WHERE active
+        };
+        let count = execute_dml(delete_plan, &mut ctx).unwrap();
+        assert_eq!(count, 3); // All three rows deleted
+
+        // All three PKs should now be available for reinsertion
+        for (id, name) in &[(1, "new_alice"), (2, "new_bob"), (3, "new_carol")] {
+            let plan = PhysicalPlan::Insert {
+                table_id,
+                values: vec![
+                    lit_int(*id),
+                    lit_text(name),
+                    ResolvedExpr::Literal(Value::Bool(false)),
+                ],
+            };
+            assert!(execute_dml(plan, &mut ctx).is_ok());
+        }
+
+        // Verify all three rows exist
+        let scan_plan = PhysicalPlan::SeqScan {
+            table_id,
+            schema: vec!["id".into(), "name".into(), "active".into()],
+        };
+        let rows = execute_query(scan_plan, &mut ctx).unwrap();
+        assert_eq!(rows.len(), 3);
     }
 }
 
@@ -1007,7 +1201,10 @@ impl<'a> ExecutionContext<'a> {
     ///
     /// If the table has no primary key, returns None.
     /// On first access, builds the index by scanning all existing rows.
-    pub fn pk_index(&mut self, table_id: TableId) -> DbResult<Option<&mut pk_index::PrimaryKeyIndex>> {
+    pub fn pk_index(
+        &mut self,
+        table_id: TableId,
+    ) -> DbResult<Option<&mut pk_index::PrimaryKeyIndex>> {
         let table_meta = self.catalog.table_by_id(table_id)?;
 
         // No PK defined for this table

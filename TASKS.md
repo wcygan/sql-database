@@ -14,5 +14,5 @@
   - [x] Write regression tests proving duplicate PK inserts are rejected (executor/src/lib.rs:538-771, 4 tests)
   - [x] Forbid UPDATE operations that modify PK columns (executor/src/dml.rs:165-177)
   - [x] Write regression tests proving PK updates are rejected (executor/src/lib.rs:773-924, 3 tests)
-  - [ ] Remove PK entries from index on DELETE
-  - [ ] Write regression tests proving deleted PKs can be reinserted
+  - [x] Remove PK entries from index on DELETE (executor/src/dml.rs:279-283)
+  - [x] Write regression tests proving deleted PKs can be reinserted (executor/src/lib.rs:929-1118, 3 tests)

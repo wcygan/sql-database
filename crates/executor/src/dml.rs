@@ -276,6 +276,12 @@ impl Executor for DeleteExec {
                 continue;
             };
 
+            // Remove from PK index if table has primary key
+            if let Some(pk_index) = ctx.pk_index(self.table_id)? {
+                let key = pk_index.extract_key(&row)?;
+                pk_index.remove(&key);
+            }
+
             {
                 let mut heap_table = ctx.heap_table(self.table_id)?;
                 heap_table.delete(rid)?;
