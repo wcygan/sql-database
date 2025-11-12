@@ -129,7 +129,7 @@ pub fn create_test_catalog() -> Catalog {
     ];
 
     catalog
-        .create_table("users", columns)
+        .create_table("users", columns, None)
         .expect("failed to create table");
 
     catalog

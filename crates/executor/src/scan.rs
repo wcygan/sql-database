@@ -732,7 +732,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut catalog = create_test_catalog();
         catalog
-            .create_table("numbers", vec![Column::new("value", SqlType::Int)])
+            .create_table("numbers", vec![Column::new("value", SqlType::Int)], None)
             .unwrap();
         let table_id = catalog.table("numbers").unwrap().id;
 

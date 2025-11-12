@@ -15,6 +15,7 @@ fn sample_catalog() -> Catalog {
                 Column::new("name", SqlType::Text),
                 Column::new("age", SqlType::Int),
             ],
+            None,
         )
         .unwrap();
     catalog
@@ -477,6 +478,7 @@ fn multiple_indexes_on_same_column_prefers_first() {
                 Column::new("id", SqlType::Int),
                 Column::new("price", SqlType::Int),
             ],
+            None,
         )
         .unwrap();
 

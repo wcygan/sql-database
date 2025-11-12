@@ -127,7 +127,7 @@ impl App {
         let table_id = self
             .state
             .catalog
-            .create_table(&name, catalog_columns)
+            .create_table(&name, catalog_columns, None)
             .map_err(anyhow::Error::from)?;
         self.state.persist_catalog()?;
         self.state.log_wal(WalRecord::CreateTable {

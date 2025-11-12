@@ -95,7 +95,12 @@ impl Catalog {
     }
 
     /// Create a new table with the provided columns, returning its identifier.
-    pub fn create_table(&mut self, name: &str, columns: Vec<Column>) -> DbResult<TableId> {
+    pub fn create_table(
+        &mut self,
+        name: &str,
+        columns: Vec<Column>,
+        primary_key: Option<Vec<ColumnId>>,
+    ) -> DbResult<TableId> {
         Self::validate_table_name(name)?;
         if self.table_name_index.contains_key(name) {
             return Err(DbError::Catalog(format!("table '{name}' already exists")));
@@ -103,7 +108,12 @@ impl Catalog {
         let schema = TableSchema::try_new(columns)?;
         let table_id = TableId(self.next_table_id);
         self.next_table_id += 1;
-        let table = TableMeta::new(table_id, name.to_string(), schema);
+        let mut table = TableMeta::new(table_id, name.to_string(), schema);
+
+        if let Some(pk_columns) = primary_key {
+            table.set_primary_key(pk_columns)?;
+        }
+
         self.tables.push(table);
         self.rebuild_indexes();
         Ok(table_id)
@@ -299,6 +309,9 @@ pub struct TableMeta {
     pub name: String,
     pub schema: TableSchema,
     pub storage: StorageDescriptor,
+    /// Primary key columns (ordinals). None if table has no PRIMARY KEY constraint.
+    /// Empty Vec is invalid; use None for no constraint.
+    pub primary_key: Option<Vec<ColumnId>>,
     pub indexes: Vec<IndexMeta>,
     #[serde(skip)]
     #[serde(default)]
@@ -315,6 +328,7 @@ impl TableMeta {
             name,
             schema,
             storage: StorageDescriptor::new(),
+            primary_key: None,
             indexes: Vec::new(),
             index_name_lookup: Map::default(),
             index_id_lookup: Map::default(),
@@ -332,6 +346,42 @@ impl TableMeta {
         }
         self.indexes.push(index);
         self.rebuild_index_lookup();
+        Ok(())
+    }
+
+    /// Sets the primary key columns for this table. Validates that:
+    /// - All column ordinals exist in the schema
+    /// - The list is non-empty
+    /// - No duplicate columns
+    pub fn set_primary_key(&mut self, columns: Vec<ColumnId>) -> DbResult<()> {
+        if columns.is_empty() {
+            return Err(DbError::Catalog(
+                "primary key must include at least one column".to_string(),
+            ));
+        }
+
+        let num_columns = self.schema.columns().len();
+        for &col_id in &columns {
+            if (col_id as usize) >= num_columns {
+                return Err(DbError::Catalog(format!(
+                    "primary key column ordinal {} out of bounds (table has {} columns)",
+                    col_id, num_columns
+                )));
+            }
+        }
+
+        // Check for duplicate columns
+        let mut seen = std::collections::HashSet::new();
+        for &col_id in &columns {
+            if !seen.insert(col_id) {
+                return Err(DbError::Catalog(format!(
+                    "duplicate column {} in primary key",
+                    col_id
+                )));
+            }
+        }
+
+        self.primary_key = Some(columns);
         Ok(())
     }
 
@@ -566,7 +616,9 @@ mod tests {
     #[test]
     fn create_and_lookup_table() {
         let mut catalog = Catalog::new();
-        let table_id = catalog.create_table("users", sample_columns()).unwrap();
+        let table_id = catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
 
         assert_eq!(table_id, TableId(1));
 
@@ -581,8 +633,12 @@ mod tests {
     #[test]
     fn rejects_duplicate_tables() {
         let mut catalog = Catalog::new();
-        catalog.create_table("users", sample_columns()).unwrap();
-        let err = catalog.create_table("users", sample_columns()).unwrap_err();
+        catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
+        let err = catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap_err();
 
         assert!(matches!(err, DbError::Catalog(_)));
         assert!(format!("{err}").contains("already exists"));
@@ -598,6 +654,7 @@ mod tests {
                     Column::new("id", SqlType::Int),
                     Column::new("id", SqlType::Int),
                 ],
+                None,
             )
             .unwrap_err();
         assert!(format!("{err}").contains("duplicate column"));
@@ -606,7 +663,9 @@ mod tests {
     #[test]
     fn create_and_drop_index() {
         let mut catalog = Catalog::new();
-        catalog.create_table("users", sample_columns()).unwrap();
+        catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
 
         let index_id = catalog
             .create_index()
@@ -631,7 +690,9 @@ mod tests {
     #[test]
     fn index_creation_validates_columns() {
         let mut catalog = Catalog::new();
-        catalog.create_table("users", sample_columns()).unwrap();
+        catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
 
         let err = catalog
             .create_index()
@@ -647,7 +708,9 @@ mod tests {
     #[test]
     fn persistence_round_trip() {
         let mut catalog = Catalog::new();
-        catalog.create_table("users", sample_columns()).unwrap();
+        catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
         catalog
             .create_index()
             .table_name("users")
@@ -671,7 +734,9 @@ mod tests {
     #[test]
     fn drop_table_removes_metadata() {
         let mut catalog = Catalog::new();
-        catalog.create_table("users", sample_columns()).unwrap();
+        catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
         catalog
             .create_index()
             .table_name("users")
@@ -686,7 +751,9 @@ mod tests {
         assert!(catalog.table_by_id(TableId(1)).is_err());
 
         // Adding a table after drop reuses metadata safely but increments ids.
-        let next_id = catalog.create_table("orders", sample_columns()).unwrap();
+        let next_id = catalog
+            .create_table("orders", sample_columns(), None)
+            .unwrap();
         assert_eq!(next_id, TableId(2));
     }
 
@@ -694,7 +761,7 @@ mod tests {
     fn reserved_table_names_rejected() {
         let mut catalog = Catalog::new();
         let err = catalog
-            .create_table("_catalog", sample_columns())
+            .create_table("_catalog", sample_columns(), None)
             .expect_err("reserved name rejected");
         assert!(format!("{err}").contains("reserved"));
     }
@@ -702,7 +769,9 @@ mod tests {
     #[test]
     fn reserved_index_names_rejected() {
         let mut catalog = Catalog::new();
-        catalog.create_table("users", sample_columns()).unwrap();
+        catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
         let err = catalog
             .create_index()
             .table_name("users")
@@ -724,7 +793,7 @@ mod tests {
 
         // Newly loaded catalog should behave like a fresh catalog instance.
         let new_table_id = catalog
-            .create_table("users", sample_columns())
+            .create_table("users", sample_columns(), None)
             .expect("table creation works");
         assert_eq!(new_table_id, TableId(1));
     }
@@ -732,7 +801,9 @@ mod tests {
     #[test]
     fn index_creation_rejects_empty_column_list() {
         let mut catalog = Catalog::new();
-        catalog.create_table("users", sample_columns()).unwrap();
+        catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
 
         let err = catalog
             .create_index()
@@ -751,8 +822,12 @@ mod tests {
     #[test]
     fn index_names_unique_across_tables() {
         let mut catalog = Catalog::new();
-        catalog.create_table("users", sample_columns()).unwrap();
-        catalog.create_table("orders", sample_columns()).unwrap();
+        catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
+        catalog
+            .create_table("orders", sample_columns(), None)
+            .unwrap();
         catalog
             .create_index()
             .table_name("users")
@@ -775,7 +850,9 @@ mod tests {
     #[test]
     fn index_rejects_duplicate_columns() {
         let mut catalog = Catalog::new();
-        catalog.create_table("users", sample_columns()).unwrap();
+        catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
         let err = catalog
             .create_index()
             .table_name("users")
@@ -790,7 +867,9 @@ mod tests {
     #[test]
     fn bitmap_index_requires_bool_columns() {
         let mut catalog = Catalog::new();
-        catalog.create_table("users", sample_columns()).unwrap();
+        catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
 
         catalog
             .create_index()
@@ -815,7 +894,9 @@ mod tests {
     #[test]
     fn trie_index_requires_text_columns() {
         let mut catalog = Catalog::new();
-        catalog.create_table("users", sample_columns()).unwrap();
+        catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
 
         catalog
             .create_index()
@@ -840,8 +921,12 @@ mod tests {
     #[test]
     fn table_name_and_summary_helpers() {
         let mut catalog = Catalog::new();
-        catalog.create_table("users", sample_columns()).unwrap();
-        catalog.create_table("orders", sample_columns()).unwrap();
+        catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
+        catalog
+            .create_table("orders", sample_columns(), None)
+            .unwrap();
         catalog
             .create_index()
             .table_name("users")
@@ -866,8 +951,12 @@ mod tests {
     #[test]
     fn tables_iterator_and_summaries_reflect_current_state() {
         let mut catalog = Catalog::new();
-        catalog.create_table("users", sample_columns()).unwrap();
-        catalog.create_table("orders", sample_columns()).unwrap();
+        catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
+        catalog
+            .create_table("orders", sample_columns(), None)
+            .unwrap();
 
         let iterated_names: Vec<_> = catalog.tables().map(|t| t.name.clone()).collect();
         assert_eq!(iterated_names, vec!["users", "orders"]);
@@ -980,5 +1069,110 @@ mod tests {
     fn storage_descriptor_default_uses_new() {
         let descriptor = StorageDescriptor::default();
         assert_ne!(descriptor.file_id, Uuid::nil());
+    }
+
+    #[test]
+    fn create_table_with_single_column_primary_key() {
+        let mut catalog = Catalog::new();
+        let table_id = catalog
+            .create_table("users", sample_columns(), Some(vec![0]))
+            .unwrap();
+
+        let table = catalog.table("users").unwrap();
+        assert_eq!(table.primary_key, Some(vec![0]));
+        assert_eq!(table_id, TableId(1));
+    }
+
+    #[test]
+    fn create_table_with_composite_primary_key() {
+        let mut catalog = Catalog::new();
+        let table_id = catalog
+            .create_table("users", sample_columns(), Some(vec![0, 1]))
+            .unwrap();
+
+        let table = catalog.table("users").unwrap();
+        assert_eq!(table.primary_key, Some(vec![0, 1]));
+        assert_eq!(table_id, TableId(1));
+    }
+
+    #[test]
+    fn create_table_with_no_primary_key() {
+        let mut catalog = Catalog::new();
+        let table_id = catalog
+            .create_table("users", sample_columns(), None)
+            .unwrap();
+
+        let table = catalog.table("users").unwrap();
+        assert_eq!(table.primary_key, None);
+        assert_eq!(table_id, TableId(1));
+    }
+
+    #[test]
+    fn primary_key_rejects_empty_column_list() {
+        let mut catalog = Catalog::new();
+        let err = catalog
+            .create_table("users", sample_columns(), Some(vec![]))
+            .unwrap_err();
+
+        assert_eq!(
+            format!("{err}"),
+            "catalog: primary key must include at least one column"
+        );
+    }
+
+    #[test]
+    fn primary_key_rejects_out_of_bounds_column() {
+        let mut catalog = Catalog::new();
+        let err = catalog
+            .create_table("users", sample_columns(), Some(vec![99]))
+            .unwrap_err();
+
+        assert!(format!("{err}").contains("out of bounds"));
+        assert!(format!("{err}").contains("99"));
+    }
+
+    #[test]
+    fn primary_key_rejects_duplicate_columns() {
+        let mut catalog = Catalog::new();
+        let err = catalog
+            .create_table("users", sample_columns(), Some(vec![0, 1, 0]))
+            .unwrap_err();
+
+        assert_eq!(
+            format!("{err}"),
+            "catalog: duplicate column 0 in primary key"
+        );
+    }
+
+    #[test]
+    fn set_primary_key_validates_column_bounds() {
+        let mut table = sample_table_meta("users");
+        let err = table.set_primary_key(vec![10]).unwrap_err();
+
+        assert!(format!("{err}").contains("out of bounds"));
+    }
+
+    #[test]
+    fn set_primary_key_validates_no_duplicates() {
+        let mut table = sample_table_meta("users");
+        let err = table.set_primary_key(vec![0, 0]).unwrap_err();
+
+        assert!(format!("{err}").contains("duplicate column"));
+    }
+
+    #[test]
+    fn primary_key_persists_through_save_load() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("catalog.json");
+
+        let mut catalog = Catalog::new();
+        catalog
+            .create_table("users", sample_columns(), Some(vec![0, 1]))
+            .unwrap();
+        catalog.save(&path).unwrap();
+
+        let loaded = Catalog::load(&path).unwrap();
+        let table = loaded.table("users").unwrap();
+        assert_eq!(table.primary_key, Some(vec![0, 1]));
     }
 }
