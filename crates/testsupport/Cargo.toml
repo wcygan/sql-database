@@ -1,0 +1,26 @@
+[package]
+name = "testsupport"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Workspace crates
+common = { workspace = true }
+types = { workspace = true }
+catalog = { workspace = true }
+parser = { workspace = true }
+planner = { workspace = true }
+executor = { workspace = true }
+storage = { workspace = true }
+buffer = { workspace = true }
+wal = { workspace = true }
+expr = { workspace = true }
+
+# Testing utilities
+tempfile = { workspace = true }
+proptest = { workspace = true }
+insta = { workspace = true }
+pretty_assertions = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+bincode = { workspace = true }
