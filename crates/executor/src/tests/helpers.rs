@@ -160,39 +160,67 @@ pub fn make_row(values: Vec<Value>) -> Row {
 }
 
 // Expression builders
+//
+// DEPRECATED: These helper functions are replaced by macros in testsupport.
+// Use `testsupport::prelude::*` and the following macros instead:
+//
+// - lit!(int: 42)        instead of lit_int(42)
+// - lit!(text: "foo")    instead of lit_text("foo")
+// - lit!(bool: true)     instead of lit_bool(true)
+// - lit!(Value::Null)    instead of lit_null()
+// - col!(0)              instead of col(0)
+// - binary!(l, op, r)    instead of binary(l, op, r)
+// - unary!(op, e)        instead of unary(op, e)
+//
+// The macros provide the same functionality with better ergonomics.
+// These functions are kept temporarily for backward compatibility.
 
 /// Create a literal expression.
+/// DEPRECATED: Use `lit!(value)` from testsupport instead.
 #[allow(dead_code)]
+#[deprecated(note = "Use `lit!(value)` macro from testsupport instead")]
 pub fn lit(value: Value) -> ResolvedExpr {
     ResolvedExpr::Literal(value)
 }
 
 /// Create a literal integer expression.
+/// DEPRECATED: Use `lit!(int: value)` from testsupport instead.
+#[deprecated(note = "Use `lit!(int: value)` macro from testsupport instead")]
 pub fn lit_int(value: i64) -> ResolvedExpr {
     ResolvedExpr::Literal(Value::Int(value))
 }
 
 /// Create a literal text expression.
+/// DEPRECATED: Use `lit!(text: value)` from testsupport instead.
+#[deprecated(note = "Use `lit!(text: value)` macro from testsupport instead")]
 pub fn lit_text(value: &str) -> ResolvedExpr {
     ResolvedExpr::Literal(Value::Text(value.to_string()))
 }
 
 /// Create a literal boolean expression.
+/// DEPRECATED: Use `lit!(bool: value)` from testsupport instead.
+#[deprecated(note = "Use `lit!(bool: value)` macro from testsupport instead")]
 pub fn lit_bool(value: bool) -> ResolvedExpr {
     ResolvedExpr::Literal(Value::Bool(value))
 }
 
 /// Create a literal NULL expression.
+/// DEPRECATED: Use `lit!(Value::Null)` from testsupport instead.
+#[deprecated(note = "Use `lit!(Value::Null)` macro from testsupport instead")]
 pub fn lit_null() -> ResolvedExpr {
     ResolvedExpr::Literal(Value::Null)
 }
 
 /// Create a column reference expression.
+/// DEPRECATED: Use `col!(id)` from testsupport instead.
+#[deprecated(note = "Use `col!(id)` macro from testsupport instead")]
 pub fn col(id: ColumnId) -> ResolvedExpr {
     ResolvedExpr::Column(id)
 }
 
 /// Create a binary expression.
+/// DEPRECATED: Use `binary!(left, op, right)` from testsupport instead.
+#[deprecated(note = "Use `binary!(left, op, right)` macro from testsupport instead")]
 pub fn binary(left: ResolvedExpr, op: BinaryOp, right: ResolvedExpr) -> ResolvedExpr {
     ResolvedExpr::Binary {
         left: Box::new(left),
@@ -202,6 +230,8 @@ pub fn binary(left: ResolvedExpr, op: BinaryOp, right: ResolvedExpr) -> Resolved
 }
 
 /// Create a unary expression.
+/// DEPRECATED: Use `unary!(op, expr)` from testsupport instead.
+#[deprecated(note = "Use `unary!(op, expr)` macro from testsupport instead")]
 pub fn unary(op: UnaryOp, expr: ResolvedExpr) -> ResolvedExpr {
     ResolvedExpr::Unary {
         op,

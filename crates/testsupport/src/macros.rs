@@ -200,6 +200,206 @@ macro_rules! test_wal {
     };
 }
 
+/// Creates a literal expression for tests.
+///
+/// This macro simplifies creating `ResolvedExpr::Literal` expressions in tests
+/// by providing type-specific variants.
+///
+/// # Syntax
+///
+/// ```text
+/// lit!(Value)                     // Wrap existing Value
+/// lit!(int: N)                    // Integer literal
+/// lit!(text: "string")            // Text literal
+/// lit!(bool: true/false)          // Boolean literal
+/// lit!(null)                      // NULL literal
+/// ```
+///
+/// # Examples
+///
+/// ```
+/// use testsupport::lit;
+/// use planner::ResolvedExpr;
+/// use types::Value;
+///
+/// // Integer literal
+/// let expr = lit!(int: 42);
+/// assert!(matches!(expr, ResolvedExpr::Literal(Value::Int(42))));
+/// ```
+///
+/// ```
+/// use testsupport::lit;
+/// use planner::ResolvedExpr;
+/// use types::Value;
+///
+/// // Text literal
+/// let expr = lit!(text: "alice");
+/// assert!(matches!(expr, ResolvedExpr::Literal(Value::Text(_))));
+/// ```
+///
+/// ```
+/// use testsupport::lit;
+/// use planner::ResolvedExpr;
+/// use types::Value;
+///
+/// // Boolean literal
+/// let expr = lit!(bool: true);
+/// assert!(matches!(expr, ResolvedExpr::Literal(Value::Bool(true))));
+/// ```
+///
+/// ```
+/// use testsupport::lit;
+/// use planner::ResolvedExpr;
+/// use types::Value;
+///
+/// // NULL literal (wrap Value::Null)
+/// let expr = lit!(Value::Null);
+/// assert!(matches!(expr, ResolvedExpr::Literal(Value::Null)));
+/// ```
+#[macro_export]
+macro_rules! lit {
+    // Wrap existing Value
+    ($val:expr) => {
+        ::planner::ResolvedExpr::Literal($val)
+    };
+
+    // Integer literal
+    (int: $val:expr) => {
+        ::planner::ResolvedExpr::Literal(::types::Value::Int($val))
+    };
+
+    // Text literal
+    (text: $val:expr) => {
+        ::planner::ResolvedExpr::Literal(::types::Value::Text($val.to_string()))
+    };
+
+    // Boolean literal
+    (bool: $val:expr) => {
+        ::planner::ResolvedExpr::Literal(::types::Value::Bool($val))
+    };
+
+    // NULL literal - match the literal token "null"
+    (null) => {
+        ::planner::ResolvedExpr::Literal(::types::Value::Null)
+    };
+}
+
+/// Creates a column reference expression.
+///
+/// This macro simplifies creating `ResolvedExpr::Column` expressions in tests.
+///
+/// # Syntax
+///
+/// ```text
+/// col!(column_id)
+/// ```
+///
+/// # Examples
+///
+/// ```
+/// use testsupport::col;
+/// use planner::ResolvedExpr;
+/// use common::ColumnId;
+///
+/// // Column reference
+/// let expr = col!(0);
+/// assert!(matches!(expr, ResolvedExpr::Column(0)));
+/// ```
+///
+/// ```
+/// use testsupport::col;
+///
+/// let name_col = col!(1);
+/// let age_col = col!(2);
+/// ```
+#[macro_export]
+macro_rules! col {
+    ($id:expr) => {
+        ::planner::ResolvedExpr::Column($id as ::common::ColumnId)
+    };
+}
+
+/// Creates a binary expression.
+///
+/// This macro simplifies creating binary operations in tests by automatically
+/// boxing the left and right operands.
+///
+/// # Syntax
+///
+/// ```text
+/// binary!(left, op, right)
+/// ```
+///
+/// # Examples
+///
+/// ```
+/// use testsupport::{binary, col, lit};
+/// use planner::ResolvedExpr;
+/// use expr::BinaryOp;
+///
+/// // id = 42
+/// let expr = binary!(col!(0), BinaryOp::Eq, lit!(int: 42));
+/// assert!(matches!(expr, ResolvedExpr::Binary { .. }));
+/// ```
+///
+/// ```
+/// use testsupport::{binary, lit};
+/// use expr::BinaryOp;
+///
+/// // 10 > 5
+/// let expr = binary!(lit!(int: 10), BinaryOp::Gt, lit!(int: 5));
+/// ```
+#[macro_export]
+macro_rules! binary {
+    ($left:expr, $op:expr, $right:expr) => {
+        ::planner::ResolvedExpr::Binary {
+            left: Box::new($left),
+            op: $op,
+            right: Box::new($right),
+        }
+    };
+}
+
+/// Creates a unary expression.
+///
+/// This macro simplifies creating unary operations in tests by automatically
+/// boxing the operand.
+///
+/// # Syntax
+///
+/// ```text
+/// unary!(op, expr)
+/// ```
+///
+/// # Examples
+///
+/// ```
+/// use testsupport::{unary, col};
+/// use planner::ResolvedExpr;
+/// use expr::UnaryOp;
+///
+/// // NOT active
+/// let expr = unary!(UnaryOp::Not, col!(2));
+/// assert!(matches!(expr, ResolvedExpr::Unary { .. }));
+/// ```
+///
+/// ```
+/// use testsupport::{unary, lit};
+/// use expr::UnaryOp;
+///
+/// // NOT true
+/// let expr = unary!(UnaryOp::Not, lit!(bool: true));
+/// ```
+#[macro_export]
+macro_rules! unary {
+    ($op:expr, $expr:expr) => {
+        ::planner::ResolvedExpr::Unary {
+            op: $op,
+            expr: Box::new($expr),
+        }
+    };
+}
+
 /// Creates a Row with typed values.
 ///
 /// This macro simplifies row construction for tests by providing a concise
@@ -274,6 +474,8 @@ macro_rules! row {
 #[cfg(test)]
 mod tests {
     use buffer::Pager;
+    use expr::{BinaryOp, UnaryOp};
+    use planner::ResolvedExpr;
     use types::{SqlType, Value};
 
     #[test]
@@ -368,5 +570,90 @@ mod tests {
         assert_eq!(r.values[0], Value::Bool(true));
         assert_eq!(r.values[1], Value::Bool(false));
         assert_eq!(r.values[2], Value::Bool(true));
+    }
+
+    // Expression builder macro tests
+
+    #[test]
+    fn test_lit_macro_int() {
+        let expr = lit!(int: 42);
+        assert!(matches!(expr, ResolvedExpr::Literal(Value::Int(42))));
+    }
+
+    #[test]
+    fn test_lit_macro_text() {
+        let expr = lit!(text: "hello");
+        match expr {
+            ResolvedExpr::Literal(Value::Text(s)) => assert_eq!(s, "hello"),
+            _ => panic!("expected text literal"),
+        }
+    }
+
+    #[test]
+    fn test_lit_macro_bool() {
+        let expr = lit!(bool: true);
+        assert!(matches!(expr, ResolvedExpr::Literal(Value::Bool(true))));
+    }
+
+    #[test]
+    fn test_lit_macro_null() {
+        // Test by wrapping a NULL value
+        let expr = lit!(Value::Null);
+        assert!(matches!(expr, ResolvedExpr::Literal(Value::Null)));
+    }
+
+    #[test]
+    fn test_lit_macro_value() {
+        let val = Value::Int(99);
+        let expr = lit!(val);
+        assert!(matches!(expr, ResolvedExpr::Literal(Value::Int(99))));
+    }
+
+    #[test]
+    fn test_col_macro() {
+        let expr = col!(0);
+        assert!(matches!(expr, ResolvedExpr::Column(0)));
+
+        let expr = col!(5);
+        assert!(matches!(expr, ResolvedExpr::Column(5)));
+    }
+
+    #[test]
+    fn test_binary_macro() {
+        let expr = binary!(col!(0), BinaryOp::Eq, lit!(int: 42));
+
+        match expr {
+            ResolvedExpr::Binary { left, op, right } => {
+                assert!(matches!(*left, ResolvedExpr::Column(0)));
+                assert!(matches!(op, BinaryOp::Eq));
+                assert!(matches!(*right, ResolvedExpr::Literal(Value::Int(42))));
+            }
+            _ => panic!("expected binary expression"),
+        }
+    }
+
+    #[test]
+    fn test_unary_macro() {
+        let expr = unary!(UnaryOp::Not, col!(2));
+
+        match expr {
+            ResolvedExpr::Unary { op, expr } => {
+                assert!(matches!(op, UnaryOp::Not));
+                assert!(matches!(*expr, ResolvedExpr::Column(2)));
+            }
+            _ => panic!("expected unary expression"),
+        }
+    }
+
+    #[test]
+    fn test_complex_expression() {
+        // (id = 1) AND (age > 30)
+        let expr = binary!(
+            binary!(col!(0), BinaryOp::Eq, lit!(int: 1)),
+            BinaryOp::And,
+            binary!(col!(2), BinaryOp::Gt, lit!(int: 30))
+        );
+
+        assert!(matches!(expr, ResolvedExpr::Binary { .. }));
     }
 }

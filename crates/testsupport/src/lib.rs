@@ -47,10 +47,19 @@
 //!
 //! # Available Macros
 //!
+//! ## Test Setup Macros
+//!
 //! - **`test_db!`** - Database context with catalog, pager, WAL (saves 14 lines)
 //! - **`test_pager!`** - Buffer pool pager setup (saves 3 lines)
 //! - **`test_wal!`** - Write-ahead log setup (saves 2 lines)
 //! - **`row!`** - Typed row construction with variants (int, text, bool)
+//!
+//! ## Expression Builder Macros
+//!
+//! - **`lit!`** - Create literal expressions: `lit!(int: 42)`, `lit!(text: "foo")`
+//! - **`col!`** - Create column references: `col!(0)`
+//! - **`binary!`** - Create binary expressions: `binary!(col!(0), BinaryOp::Eq, lit!(int: 1))`
+//! - **`unary!`** - Create unary expressions: `unary!(UnaryOp::Not, col!(2))`
 
 pub mod assertions;
 pub mod context;
@@ -66,9 +75,15 @@ pub mod prelude {
     pub use crate::fixtures::*;
     pub use crate::runner::*;
 
-    // Re-export macros for convenience
+    // Re-export test setup macros
     pub use crate::row;
     pub use crate::test_db;
     pub use crate::test_pager;
     pub use crate::test_wal;
+
+    // Re-export expression builder macros
+    pub use crate::binary;
+    pub use crate::col;
+    pub use crate::lit;
+    pub use crate::unary;
 }
