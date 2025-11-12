@@ -18,7 +18,7 @@ With custom configuration:
 cargo run --bin toydb-server -- \
   --host 0.0.0.0 \
   --port 5432 \
-  --data-dir ./my_data \
+  --data-dir ./db_data \
   --buffer-pages 512
 ```
 

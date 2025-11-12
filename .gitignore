@@ -2,3 +2,8 @@
 **/target/*
 db_data/
 **/db_data/*
+my_data/
+test_data/
+*_data/
+*.wal
+catalog.json
