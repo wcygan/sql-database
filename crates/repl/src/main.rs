@@ -256,7 +256,7 @@ impl App {
             let _ = editor.load_history(&history_path);
         }
 
-        println!("Connected. Type SQL statements terminated by ';' or use .help");
+        println!("Connected. Type SQL statements terminated by ';' or use .help or .examples");
 
         let mut buffer = String::new();
         loop {
@@ -322,7 +322,7 @@ impl App {
             "" => Ok(MetaOutcome::Continue),
             ".help" | "\\?" => {
                 println!(
-                    "Available commands:\n  .tables          List tables\n  .schema <table>  Show table schema\n  .quit/.exit      Exit the REPL"
+                    "Available commands:\n  .tables          List tables\n  .schema <table>  Show table schema\n  .examples        Show SQL examples\n  .reset           Reset database (clear all data)\n  .quit/.exit      Exit the REPL"
                 );
                 Ok(MetaOutcome::Continue)
             }
@@ -337,6 +337,14 @@ impl App {
                 } else if let Err(err) = self.show_schema(parts[1]) {
                     eprintln!("error: {err}");
                 }
+                Ok(MetaOutcome::Continue)
+            }
+            ".examples" => {
+                self.show_examples();
+                Ok(MetaOutcome::Continue)
+            }
+            ".reset" => {
+                self.reset_database()?;
                 Ok(MetaOutcome::Continue)
             }
             ".quit" | ".exit" | "\\q" => Ok(MetaOutcome::Exit),
@@ -418,12 +426,46 @@ impl App {
     fn history_path(&self) -> PathBuf {
         self.state.data_dir.join(HISTORY_FILE)
     }
+
+    fn reset_database(&mut self) -> Result<()> {
+        println!("Resetting database...");
+        self.state.reset()?;
+        println!("Database reset complete. All data cleared.");
+        Ok(())
+    }
+
+    fn show_examples(&self) {
+        println!("SQL Examples:\n");
+        println!("DDL - Data Definition Language:");
+        println!("  CREATE TABLE users (id INT, name TEXT, active BOOL);");
+        println!("  CREATE TABLE users (id INT PRIMARY KEY, email TEXT);");
+        println!("  DROP TABLE users;");
+        println!("  CREATE INDEX idx_name ON users (name);");
+        println!("  DROP INDEX idx_name;\n");
+        println!("DML - Data Manipulation Language:");
+        println!("  INSERT INTO users VALUES (1, 'Alice', true);");
+        println!("  INSERT INTO users VALUES (2, 'Bob', false);");
+        println!("  SELECT * FROM users;");
+        println!("  SELECT id, name FROM users WHERE active = true;");
+        println!("  UPDATE users SET active = false WHERE id = 1;");
+        println!("  DELETE FROM users WHERE id = 2;\n");
+        println!("Meta Commands:");
+        println!("  .tables          List all tables");
+        println!("  .schema users    Show table schema");
+        println!("  .examples        Show this help");
+        println!("  .reset           Clear all data");
+        println!("  .help            Show available commands");
+        println!("  .quit            Exit the REPL\n");
+        println!("Supported Types: INT, TEXT, BOOL");
+    }
 }
 
 #[derive(Debug)]
 struct DatabaseState {
     data_dir: PathBuf,
     catalog_path: PathBuf,
+    wal_path: PathBuf,
+    buffer_pages: usize,
     catalog: Catalog,
     pager: FilePager,
     wal: Wal,
@@ -440,13 +482,16 @@ impl DatabaseState {
             .with_context(|| format!("failed to create data directory {}", data_dir.display()))?;
 
         let catalog_path = data_dir.join(catalog_file);
+        let wal_path = data_dir.join(wal_file);
         let catalog = Catalog::load(&catalog_path).map_err(anyhow::Error::from)?;
         let pager = FilePager::new(data_dir, buffer_pages);
-        let wal = Wal::open(&data_dir.join(wal_file)).map_err(anyhow::Error::from)?;
+        let wal = Wal::open(&wal_path).map_err(anyhow::Error::from)?;
 
         Ok(Self {
             data_dir: data_dir.to_path_buf(),
             catalog_path,
+            wal_path,
+            buffer_pages,
             catalog,
             pager,
             wal,
@@ -486,6 +531,48 @@ impl DatabaseState {
             self.data_dir.clone(),
         );
         f(&mut ctx).map_err(anyhow::Error::from)
+    }
+
+    fn reset(&mut self) -> Result<()> {
+        // Remove all table files (.tbl) and heap files (.heap)
+        let entries = fs::read_dir(&self.data_dir).with_context(|| {
+            format!("failed to read data directory {}", self.data_dir.display())
+        })?;
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(ext) = path.extension()
+                && (ext == "heap" || ext == "tbl")
+            {
+                fs::remove_file(&path)
+                    .with_context(|| format!("failed to remove file {}", path.display()))?;
+            }
+        }
+
+        // Remove catalog file if it exists
+        if self.catalog_path.exists() {
+            fs::remove_file(&self.catalog_path).with_context(|| {
+                format!("failed to remove catalog {}", self.catalog_path.display())
+            })?;
+        }
+
+        // Remove WAL file (close it first by replacing with a temp instance)
+        drop(std::mem::replace(&mut self.wal, Wal::open(&self.wal_path)?));
+        if self.wal_path.exists() {
+            fs::remove_file(&self.wal_path)
+                .with_context(|| format!("failed to remove WAL {}", self.wal_path.display()))?;
+        }
+
+        // Reinitialize catalog
+        self.catalog = Catalog::load(&self.catalog_path).map_err(anyhow::Error::from)?;
+
+        // Reinitialize pager (clear buffer pool)
+        self.pager = FilePager::new(&self.data_dir, self.buffer_pages);
+
+        // Reinitialize WAL
+        self.wal = Wal::open(&self.wal_path).map_err(anyhow::Error::from)?;
+
+        Ok(())
     }
 }
 
