@@ -302,6 +302,7 @@ impl<'a> App<'a> {
                     "  .help              Show this help".to_string(),
                     "  .tables            List all tables".to_string(),
                     "  .schema <table>    Show table schema".to_string(),
+                    "  .examples          Show SQL examples".to_string(),
                     "  .reset             Reset database (clear all data)".to_string(),
                     "".to_string(),
                     "Keyboard Shortcuts:".to_string(),
@@ -406,6 +407,39 @@ impl<'a> App<'a> {
                         self.status_message = Some(format!("Error resetting database: {}", e));
                     }
                 }
+                self.execution_time = None;
+            }
+            ".examples" => {
+                let examples = vec![
+                    "SQL Examples".to_string(),
+                    "".to_string(),
+                    "DDL - Data Definition Language:".to_string(),
+                    "  CREATE TABLE users (id INT, name TEXT, active BOOL);".to_string(),
+                    "  CREATE TABLE users (id INT PRIMARY KEY, email TEXT);".to_string(),
+                    "  DROP TABLE users;".to_string(),
+                    "  CREATE INDEX idx_name ON users (name);".to_string(),
+                    "  DROP INDEX idx_name;".to_string(),
+                    "".to_string(),
+                    "DML - Data Manipulation Language:".to_string(),
+                    "  INSERT INTO users VALUES (1, 'Alice', true);".to_string(),
+                    "  INSERT INTO users VALUES (2, 'Bob', false);".to_string(),
+                    "  SELECT * FROM users;".to_string(),
+                    "  SELECT id, name FROM users WHERE active = true;".to_string(),
+                    "  UPDATE users SET active = false WHERE id = 1;".to_string(),
+                    "  DELETE FROM users WHERE id = 2;".to_string(),
+                    "".to_string(),
+                    "Supported Types:".to_string(),
+                    "  INT, TEXT, BOOL".to_string(),
+                ];
+
+                self.results = Some(RecordBatch {
+                    columns: vec!["Examples".to_string()],
+                    rows: examples
+                        .into_iter()
+                        .map(|line| common::Row::new(vec![types::Value::Text(line)]))
+                        .collect(),
+                });
+                self.status_message = Some("SQL examples displayed".to_string());
                 self.execution_time = None;
             }
             _ => {
