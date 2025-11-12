@@ -1,0 +1,18 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+protocol = { workspace = true }
+common = { workspace = true }
+types = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+database = { workspace = true }
+server = { workspace = true }
+tokio = { workspace = true }

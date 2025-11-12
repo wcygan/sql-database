@@ -29,7 +29,7 @@ pub enum ServerResponse {
 }
 
 /// Error codes for protocol-level errors.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ErrorCode {
     /// SQL parsing error
     ParseError,
@@ -56,10 +56,11 @@ pub mod frame {
     use super::*;
     use bincode::config;
     use std::io::{self, Read, Write};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     const MAX_FRAME_SIZE: u32 = 64 * 1024 * 1024; // 64 MB
 
-    /// Write a framed message.
+    /// Write a framed message (synchronous).
     ///
     /// Format: [u32 length][bincode payload]
     pub fn write_message<W, T>(writer: &mut W, message: &T) -> io::Result<()>
@@ -89,7 +90,7 @@ pub mod frame {
         Ok(())
     }
 
-    /// Read a framed message.
+    /// Read a framed message (synchronous).
     ///
     /// Format: [u32 length][bincode payload]
     pub fn read_message<R, T>(reader: &mut R) -> io::Result<T>
@@ -113,6 +114,68 @@ pub mod frame {
         // Read payload
         let mut payload = vec![0u8; len as usize];
         reader.read_exact(&mut payload)?;
+
+        // Deserialize
+        let (message, _) = bincode::serde::decode_from_slice(&payload, config::standard())
+            .map_err(|e| io::Error::other(format!("bincode decoding failed: {}", e)))?;
+
+        Ok(message)
+    }
+
+    /// Write a framed message (async).
+    ///
+    /// Format: [u32 length][bincode payload]
+    pub async fn write_message_async<W, T>(writer: &mut W, message: &T) -> io::Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+        T: Serialize,
+    {
+        // Serialize the message
+        let encoded = bincode::serde::encode_to_vec(message, config::standard())
+            .map_err(|e| io::Error::other(format!("bincode encoding failed: {}", e)))?;
+
+        // Check size limit
+        let len = encoded.len() as u32;
+        if len > MAX_FRAME_SIZE {
+            return Err(io::Error::other(format!(
+                "message too large: {} bytes (max {})",
+                len, MAX_FRAME_SIZE
+            )));
+        }
+
+        // Write length prefix (little-endian)
+        writer.write_all(&len.to_le_bytes()).await?;
+
+        // Write payload
+        writer.write_all(&encoded).await?;
+
+        Ok(())
+    }
+
+    /// Read a framed message (async).
+    ///
+    /// Format: [u32 length][bincode payload]
+    pub async fn read_message_async<R, T>(reader: &mut R) -> io::Result<T>
+    where
+        R: AsyncReadExt + Unpin,
+        T: for<'de> Deserialize<'de>,
+    {
+        // Read length prefix
+        let mut len_buf = [0u8; 4];
+        reader.read_exact(&mut len_buf).await?;
+        let len = u32::from_le_bytes(len_buf);
+
+        // Check size limit
+        if len > MAX_FRAME_SIZE {
+            return Err(io::Error::other(format!(
+                "message too large: {} bytes (max {})",
+                len, MAX_FRAME_SIZE
+            )));
+        }
+
+        // Read payload
+        let mut payload = vec![0u8; len as usize];
+        reader.read_exact(&mut payload).await?;
 
         // Deserialize
         let (message, _) = bincode::serde::decode_from_slice(&payload, config::standard())
@@ -178,6 +241,62 @@ mod tests {
             ServerResponse::Error { code, message } => {
                 assert!(matches!(code, ErrorCode::ParseError));
                 assert_eq!(message, "syntax error");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_round_trip_execute() {
+        let req = ClientRequest::Execute {
+            sql: "SELECT * FROM users".to_string(),
+        };
+
+        let mut buf = Vec::new();
+        frame::write_message_async(&mut buf, &req).await.unwrap();
+
+        let mut cursor = &buf[..];
+        let decoded: ClientRequest = frame::read_message_async(&mut cursor).await.unwrap();
+
+        match decoded {
+            ClientRequest::Execute { sql } => assert_eq!(sql, "SELECT * FROM users"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_round_trip_response() {
+        let resp = ServerResponse::Count { affected: 42 };
+
+        let mut buf = Vec::new();
+        frame::write_message_async(&mut buf, &resp).await.unwrap();
+
+        let mut cursor = &buf[..];
+        let decoded: ServerResponse = frame::read_message_async(&mut cursor).await.unwrap();
+
+        match decoded {
+            ServerResponse::Count { affected } => assert_eq!(affected, 42),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_error_response() {
+        let resp = ServerResponse::Error {
+            code: ErrorCode::ExecutionError,
+            message: "table not found".to_string(),
+        };
+
+        let mut buf = Vec::new();
+        frame::write_message_async(&mut buf, &resp).await.unwrap();
+
+        let mut cursor = &buf[..];
+        let decoded: ServerResponse = frame::read_message_async(&mut cursor).await.unwrap();
+
+        match decoded {
+            ServerResponse::Error { code, message } => {
+                assert!(matches!(code, ErrorCode::ExecutionError));
+                assert_eq!(message, "table not found");
             }
             _ => panic!("wrong variant"),
         }

@@ -12,6 +12,9 @@ members = [
     "crates/executor",
     "crates/database",
     "crates/protocol",
+    "crates/server",
+    "crates/client",
+    "crates/client-cli",
     "crates/wal-viewer",
     "crates/repl",
     "crates/testsupport",
@@ -22,6 +25,7 @@ resolver = "2"
 [workspace.dependencies]
 buffer = { path = "crates/buffer" }
 catalog = { path = "crates/catalog" }
+client = { path = "crates/client" }
 common = { path = "crates/common" }
 database = { path = "crates/database" }
 executor = { path = "crates/executor" }
@@ -29,6 +33,7 @@ expr = { path = "crates/expr" }
 parser = { path = "crates/parser" }
 planner = { path = "crates/planner" }
 protocol = { path = "crates/protocol" }
+server = { path = "crates/server" }
 storage = { path = "crates/storage" }
 types = { path = "crates/types" }
 wal = { path = "crates/wal" }
@@ -58,4 +63,4 @@ crossterm = "0.28"
 tui-textarea = "0.6"
 syntect = { version = "5.2", default-features = false, features = ["parsing", "regex-fancy"] }
 arboard = "3.4"
-tokio = { version = "1.40", features = ["rt", "rt-multi-thread", "sync", "macros", "fs"] }
+tokio = { version = "1.40", features = ["rt", "rt-multi-thread", "sync", "macros", "fs", "io-util", "net", "signal"] }

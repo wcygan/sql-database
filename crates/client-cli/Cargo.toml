@@ -1,0 +1,17 @@
+[package]
+name = "client-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "toydb-client"
+path = "src/main.rs"
+
+[dependencies]
+client = { workspace = true }
+common = { workspace = true }
+types = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+rustyline = { workspace = true }
