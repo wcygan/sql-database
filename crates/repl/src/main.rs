@@ -152,6 +152,41 @@ fn execute_and_exit(mut db: DatabaseState, sql: &str) -> Result<()> {
                 db.persist_catalog()?;
                 println!("Dropped index '{}' on '{}'.", name, table_name);
             }
+            Statement::Explain { query, analyze } => {
+                let mut planning_ctx = PlanningContext::new(&db.catalog);
+                let plan = Planner::plan(*query, &mut planning_ctx).map_err(anyhow::Error::from)?;
+
+                if analyze {
+                    // EXPLAIN ANALYZE: Execute the query and show statistics
+                    let plan_description = planner::explain_physical(&plan);
+
+                    db.with_execution_context(|ctx| {
+                        let mut executor = executor::build_executor(plan)?;
+                        executor.open(ctx)?;
+
+                        // Consume all rows to collect statistics
+                        let mut row_count = 0;
+                        while executor.next(ctx)?.is_some() {
+                            row_count += 1;
+                        }
+                        executor.close(ctx)?;
+
+                        // Display plan with statistics
+                        println!("EXPLAIN ANALYZE:");
+                        println!("{}", plan_description);
+                        println!();
+                        println!("Execution Statistics:");
+                        println!("{}", executor::format_explain_analyze(executor.as_ref(), "Query"));
+                        println!("Total rows: {}", row_count);
+
+                        Ok::<(), common::DbError>(())
+                    })?;
+                } else {
+                    // EXPLAIN: Just show the plan without executing
+                    println!("EXPLAIN:");
+                    println!("{}", planner::explain_physical(&plan));
+                }
+            }
             other => {
                 let mut planning_ctx = PlanningContext::new(&db.catalog);
                 let plan = Planner::plan(other, &mut planning_ctx).map_err(anyhow::Error::from)?;

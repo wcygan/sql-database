@@ -1125,6 +1125,7 @@ mod pk_index;
 mod project;
 mod scan;
 
+pub use builder::build_executor;
 pub use pk_index::PrimaryKeyIndex;
 
 use catalog::Catalog;
@@ -1255,6 +1256,40 @@ impl<'a> ExecutionContext<'a> {
 
         self.pk_indexes.insert(table_id, index);
         Ok(Some(self.pk_indexes.get_mut(&table_id).unwrap()))
+    }
+}
+
+/// Format execution statistics from an executor for EXPLAIN ANALYZE output.
+///
+/// Displays operator name, timing, row counts, and operator-specific metrics
+/// in a human-readable format.
+pub fn format_explain_analyze(executor: &dyn Executor, operator_name: &str) -> String {
+    let stats = executor.stats();
+
+    match stats {
+        Some(s) => {
+            let total = common::ExecutionStats::format_duration(s.total_time());
+            let mut parts = vec![
+                format!("time={}", total),
+                format!("rows={}", s.rows_produced),
+            ];
+
+            if s.pages_scanned > 0 {
+                parts.push(format!("pages={}", s.pages_scanned));
+            }
+            if s.rows_filtered > 0 {
+                let selectivity = if s.rows_produced + s.rows_filtered > 0 {
+                    s.rows_produced as f64 / (s.rows_produced + s.rows_filtered) as f64 * 100.0
+                } else {
+                    0.0
+                };
+                parts.push(format!("filtered={}", s.rows_filtered));
+                parts.push(format!("selectivity={:.1}%", selectivity));
+            }
+
+            format!("{} ({})", operator_name, parts.join(" "))
+        }
+        None => operator_name.to_string(),
     }
 }
 
