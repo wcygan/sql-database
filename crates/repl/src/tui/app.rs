@@ -3,10 +3,12 @@ use common::RecordBatch;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use database::{Database, QueryResult};
 use std::time::{Duration, Instant};
+use tokio::runtime::Handle;
 use tui_textarea::TextArea;
 
 pub struct App<'a> {
     pub db: Database,
+    pub runtime_handle: Handle,
     pub editor: TextArea<'a>,
     pub results: Option<RecordBatch>,
     pub status_message: Option<String>,
@@ -16,7 +18,7 @@ pub struct App<'a> {
 }
 
 impl<'a> App<'a> {
-    pub fn new(db: Database) -> Self {
+    pub fn new(db: Database, runtime_handle: Handle) -> Self {
         let mut editor = TextArea::default();
         editor.set_block(
             ratatui::widgets::Block::default()
@@ -26,6 +28,7 @@ impl<'a> App<'a> {
 
         Self {
             db,
+            runtime_handle,
             editor,
             results: None,
             status_message: None,
@@ -118,7 +121,7 @@ impl<'a> App<'a> {
     }
 
     fn execute_sql_inner(&mut self, sql: &str) -> Result<()> {
-        let result = tokio::runtime::Handle::current().block_on(self.db.execute(sql))?;
+        let result = self.runtime_handle.block_on(self.db.execute(sql))?;
 
         match result {
             QueryResult::Rows { schema, rows } => {
@@ -249,7 +252,7 @@ impl<'a> App<'a> {
                 self.execution_time = None;
             }
             ".reset" => {
-                match tokio::runtime::Handle::current().block_on(self.db.reset()) {
+                match self.runtime_handle.block_on(self.db.reset()) {
                     Ok(()) => {
                         self.results = None;
                         self.status_message =

@@ -479,26 +479,29 @@ async fn test_sql_script_sequential_operations() {
 
 #[tokio::test]
 async fn test_multiple_statements_same_context() {
-    let mut ctx = TestContext::new().unwrap();
+    use database::Database;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = Database::new(temp_dir.path(), "catalog.json", "test.wal", 10)
+        .await
+        .unwrap();
 
     // First statement creates table
-    let output1 = run_sql_script_with_context(
-        "CREATE TABLE users (id INT, name TEXT);",
-        &mut ctx,
-    )
-    .await.unwrap();
+    let output1 = run_sql_script_with_db("CREATE TABLE users (id INT, name TEXT);", &db)
+        .await
+        .unwrap();
     assert!(output1.contains("Created table 'users'"));
 
     // Second statement inserts data
-    let output2 = run_sql_script_with_context(
-        "INSERT INTO users VALUES (1, 'Alice');",
-        &mut ctx,
-    )
-    .await.unwrap();
+    let output2 = run_sql_script_with_db("INSERT INTO users VALUES (1, 'Alice');", &db)
+        .await
+        .unwrap();
     assert!(output2.contains("1 row(s) affected"));
 
     // Third statement queries data
-    let output3 = run_sql_script_with_context("SELECT * FROM users;", &mut ctx).await.unwrap();
+    let output3 = run_sql_script_with_db("SELECT * FROM users;", &db)
+        .await
+        .unwrap();
     assert!(output3.contains("Alice"));
 }
 

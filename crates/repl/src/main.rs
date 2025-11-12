@@ -49,8 +49,12 @@ async fn main() -> Result<()> {
         execute_and_exit(db, &sql).await?;
     } else {
         // TUI mode: interactive terminal UI
-        let app = tui::App::new(db);
-        tui::run(app)?;
+        // Get the runtime handle before moving into spawn_blocking
+        let handle = tokio::runtime::Handle::current();
+        let app = tui::App::new(db, handle);
+        // Run the TUI in a blocking task since it uses blocking I/O for terminal events
+        tokio::task::spawn_blocking(move || tui::run(app))
+            .await??;
     }
 
     Ok(())

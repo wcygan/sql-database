@@ -146,31 +146,59 @@ fn format_result(result: QueryResult, stmt: &str) -> String {
             pretty::render_record_batch(&batch, TableStyleKind::Modern)
         }
         QueryResult::Count { affected } => {
-            format!("{} row(s) affected.", affected)
+            format!("{} row(s) affected", affected)
         }
         QueryResult::Empty => {
-            // For DDL, try to infer what happened from the SQL
-            let stmt_upper = stmt.trim().to_uppercase();
+            // For DDL, extract names from SQL statements
+            let stmt_trimmed = stmt.trim();
+            let stmt_upper = stmt_trimmed.to_uppercase();
+
             if stmt_upper.starts_with("CREATE TABLE") {
-                // Extract table name
-                if let Some(name_start) = stmt_upper.find("TABLE") {
-                    let rest = &stmt[name_start + 5..].trim();
-                    if let Some(name_end) = rest.find(|c: char| c.is_whitespace() || c == '(') {
-                        let name = &rest[..name_end].trim();
-                        return format!("Created table '{}'.", name);
-                    }
-                }
-                "Table created.".to_string()
+                extract_name_after_keyword(stmt_trimmed, "TABLE")
+                    .map(|name| format!("Created table '{}'", name))
+                    .unwrap_or_else(|| "Table created".to_string())
             } else if stmt_upper.starts_with("DROP TABLE") {
-                "Table dropped.".to_string()
+                extract_name_after_keyword(stmt_trimmed, "TABLE")
+                    .map(|name| format!("Dropped table '{}'", name))
+                    .unwrap_or_else(|| "Table dropped".to_string())
             } else if stmt_upper.starts_with("CREATE INDEX") {
-                "Index created.".to_string()
+                extract_name_after_keyword(stmt_trimmed, "INDEX")
+                    .map(|name| format!("Created index '{}'", name))
+                    .unwrap_or_else(|| "Index created".to_string())
             } else if stmt_upper.starts_with("DROP INDEX") {
-                "Index dropped.".to_string()
+                extract_name_after_keyword(stmt_trimmed, "INDEX")
+                    .map(|name| format!("Dropped index '{}'", name))
+                    .unwrap_or_else(|| "Index dropped".to_string())
             } else {
                 String::new()
             }
         }
+    }
+}
+
+/// Extract the name that follows a keyword in a SQL statement.
+/// For example, "CREATE TABLE users (...)" -> Some("users")
+fn extract_name_after_keyword(stmt: &str, keyword: &str) -> Option<String> {
+    let stmt_upper = stmt.to_uppercase();
+    let keyword_upper = keyword.to_uppercase();
+
+    // Find the keyword in the uppercase version
+    let keyword_pos = stmt_upper.find(&keyword_upper)?;
+
+    // Skip past the keyword in the original statement
+    let after_keyword = stmt[keyword_pos + keyword.len()..].trim_start();
+
+    // Extract the name (alphanumeric + underscore, case-insensitive)
+    let name: String = after_keyword
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+
+    if name.is_empty() {
+        None
+    } else {
+        // Normalize to lowercase for consistency
+        Some(name.to_lowercase())
     }
 }
 
