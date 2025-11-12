@@ -8,7 +8,7 @@ fn insert_and_get_round_trip() {
     let path = dir.path().join("heap.tbl");
     let mut table = HeapFile::open(&path, 1).unwrap();
 
-    let row = Row(vec![
+    let row = Row::new(vec![
         Value::Int(1),
         Value::Text("Will".into()),
         Value::Int(27),
@@ -17,7 +17,7 @@ fn insert_and_get_round_trip() {
     let rid = table.insert(&row).unwrap();
     let fetched = table.get(rid).unwrap();
 
-    assert_eq!(fetched.0, row.0);
+    assert_eq!(fetched.values, row.values);
 }
 
 #[test]
@@ -26,7 +26,7 @@ fn delete_marks_slot_empty() {
     let path = dir.path().join("heap.tbl");
     let mut table = HeapFile::open(&path, 1).unwrap();
 
-    let row = Row(vec![Value::Int(1)]);
+    let row = Row::new(vec![Value::Int(1)]);
     let rid = table.insert(&row).unwrap();
     table.delete(rid).unwrap();
 
@@ -41,7 +41,7 @@ fn large_rows_allocate_new_pages() {
     let mut table = HeapFile::open(&path, 1).unwrap();
 
     let big_payload = "x".repeat(PAGE_SIZE - 256);
-    let row = Row(vec![Value::Text(big_payload.clone())]);
+    let row = Row::new(vec![Value::Text(big_payload.clone())]);
 
     let rid_a = table.insert(&row).unwrap();
     let rid_b = table.insert(&row).unwrap();
@@ -49,7 +49,7 @@ fn large_rows_allocate_new_pages() {
     assert!(rid_b.page_id.0 > rid_a.page_id.0);
 
     let fetched = table.get(rid_b).unwrap();
-    assert_eq!(fetched.0, vec![Value::Text(big_payload)]);
+    assert_eq!(fetched.values, vec![Value::Text(big_payload)]);
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn delete_twice_returns_error() {
     let path = dir.path().join("heap.tbl");
     let mut table = HeapFile::open(&path, 1).unwrap();
 
-    let row = Row(vec![Value::Int(7)]);
+    let row = Row::new(vec![Value::Int(7)]);
     let rid = table.insert(&row).unwrap();
 
     table.delete(rid).unwrap();
@@ -72,7 +72,7 @@ fn get_rejects_invalid_slot() {
     let path = dir.path().join("heap.tbl");
     let mut table = HeapFile::open(&path, 1).unwrap();
 
-    let row = Row(vec![Value::Int(1)]);
+    let row = Row::new(vec![Value::Int(1)]);
     let rid = table.insert(&row).unwrap();
 
     let bogus = RecordId {
@@ -125,14 +125,37 @@ fn heapfile_update_rewrites_rows() {
     let path = dir.path().join("heap.tbl");
     let mut table = HeapFile::open(&path, 1).unwrap();
 
-    let original = Row(vec![Value::Int(1)]);
-    let updated = Row(vec![Value::Int(2)]);
+    let original = Row::new(vec![Value::Int(1)]);
+    let updated = Row::new(vec![Value::Int(2)]);
     let rid = table.insert(&original).unwrap();
 
-    table.update(rid, &updated).unwrap();
-    // Current implementation rewrites by delete+insert, so the old slot becomes empty.
-    let err = table.get(rid).unwrap_err();
-    assert!(matches!(err, DbError::Storage(_)));
+    let new_rid = table.update(rid, &updated).unwrap();
+    assert_eq!(new_rid, rid);
+
+    let fetched = table.get(new_rid).unwrap();
+    assert_eq!(fetched.values, updated.values);
+}
+
+#[test]
+fn heapfile_update_relocates_when_needed() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("heap.tbl");
+    let mut table = HeapFile::open(&path, 1).unwrap();
+
+    let short = Row::new(vec![Value::Text("a".into())]);
+    let rid = table.insert(&short).unwrap();
+
+    let long = Row::new(vec![Value::Text(
+        "a very long string that exceeds the slot".into(),
+    )]);
+    let new_rid = table.update(rid, &long).unwrap();
+    assert_ne!(new_rid, rid);
+
+    let fetched = table.get(new_rid).unwrap();
+    assert_eq!(fetched.values, long.values);
+
+    // Old rid should now be empty
+    assert!(table.get(rid).is_err());
 }
 
 #[test]
@@ -166,7 +189,7 @@ fn delete_rejects_slots_past_header_bounds() {
     let path = dir.path().join("heap.tbl");
     let mut table = HeapFile::open(&path, 1).unwrap();
 
-    let row = Row(vec![Value::Int(123)]);
+    let row = Row::new(vec![Value::Int(123)]);
     let rid = table.insert(&row).unwrap();
 
     let invalid = RecordId {

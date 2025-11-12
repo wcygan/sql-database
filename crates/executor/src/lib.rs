@@ -102,12 +102,12 @@ mod tests {
 
         // Insert test data
         let rows = vec![
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
@@ -123,7 +123,7 @@ mod tests {
         let results = execute_query(plan, &mut ctx).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(
-            results[0].0,
+            results[0].values,
             vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
@@ -131,7 +131,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            results[1].0,
+            results[1].values,
             vec![Value::Int(2), Value::Text("bob".into()), Value::Bool(false)]
         );
     }
@@ -143,17 +143,17 @@ mod tests {
 
         // Insert test data
         let rows = vec![
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(3),
                 Value::Text("carol".into()),
                 Value::Bool(true),
@@ -181,7 +181,7 @@ mod tests {
         let table_id = TableId(1);
 
         // Insert test data
-        let rows = vec![Row(vec![
+        let rows = vec![Row::new(vec![
             Value::Int(1),
             Value::Text("alice".into()),
             Value::Bool(true),
@@ -200,7 +200,7 @@ mod tests {
 
         let results = execute_query(plan, &mut ctx).unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0, vec![Value::Text("alice".into())]);
+        assert_eq!(results[0].values, vec![Value::Text("alice".into())]);
     }
 
     #[test]
@@ -210,17 +210,17 @@ mod tests {
 
         // Insert test data
         let rows = vec![
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(3),
                 Value::Text("carol".into()),
                 Value::Bool(true),
@@ -246,11 +246,11 @@ mod tests {
         let results = execute_query(plan, &mut ctx).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(
-            results[0].0,
+            results[0].values,
             vec![Value::Int(1), Value::Text("alice".into())]
         );
         assert_eq!(
-            results[1].0,
+            results[1].values,
             vec![Value::Int(3), Value::Text("carol".into())]
         );
     }
@@ -281,12 +281,12 @@ mod tests {
 
         // Insert test data
         let rows = vec![
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
@@ -311,17 +311,17 @@ mod tests {
 
         // Insert test data
         let rows = vec![
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(3),
                 Value::Text("carol".into()),
                 Value::Bool(true),
@@ -529,7 +529,7 @@ pub fn execute_dml(plan: PhysicalPlan, ctx: &mut ExecutionContext) -> DbResult<u
     executor.close(ctx)?;
 
     // DML operators return single row with affected count
-    match result.0.first() {
+    match result.values.first() {
         Some(types::Value::Int(count)) => Ok(*count as u64),
         Some(other) => Err(DbError::Executor(format!(
             "DML result count must be integer, got {:?}",

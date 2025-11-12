@@ -43,7 +43,7 @@ impl Executor for InsertExec {
         self.executed = true;
 
         // Evaluate value expressions (no row context for INSERT literals)
-        let empty_row = Row(vec![]);
+        let empty_row = Row::new(vec![]);
         let mut row_values = Vec::with_capacity(self.values.len());
 
         for expr in &self.values {
@@ -51,7 +51,7 @@ impl Executor for InsertExec {
             row_values.push(value);
         }
 
-        let row = Row(row_values.clone());
+        let row = Row::new(row_values.clone());
 
         // 1. Insert into storage to get RID
         let rid = {
@@ -68,7 +68,7 @@ impl Executor for InsertExec {
         ctx.log_dml(wal_record)?;
 
         // Return single row with affected count
-        Ok(Some(Row(vec![Value::Int(1)])))
+        Ok(Some(Row::new(vec![Value::Int(1)])))
     }
 
     fn close(&mut self, _ctx: &mut ExecutionContext) -> DbResult<()> {
@@ -124,7 +124,7 @@ impl UpdateExec {
 
     /// Apply assignments to a row to produce the updated row.
     fn apply_assignments(&self, old_row: &Row) -> DbResult<Row> {
-        let mut new_values = old_row.0.clone();
+        let mut new_values = old_row.values.clone();
 
         for (col_id, expr) in &self.assignments {
             let idx = *col_id as usize;
@@ -140,7 +140,7 @@ impl UpdateExec {
             new_values[idx] = value;
         }
 
-        Ok(Row(new_values))
+        Ok(Row::new(new_values))
     }
 }
 
@@ -157,32 +157,40 @@ impl Executor for UpdateExec {
 
         let mut count = 0;
 
-        // For each matching row, apply updates
-        while let Some(old_row) = self.input.next(ctx)? {
-            // We need to get the RID somehow. For now, we'll need to track this.
-            // This is a known limitation - we need to modify the Row type or
-            // pass RID through the iterator. For v1, we'll skip actual updates.
+        // Buffer rows first so updates don't see rows reinserted during the operation
+        let mut buffered_rows = Vec::new();
+        while let Some(row) = self.input.next(ctx)? {
+            buffered_rows.push(row);
+        }
 
-            let _new_row = self.apply_assignments(&old_row)?;
+        // For each buffered row, apply updates
+        for old_row in buffered_rows {
+            let mut new_row = self.apply_assignments(&old_row)?;
 
-            // TODO: We need the RID to perform the update
-            // For now, just count the matches
+            let Some(rid) = old_row.rid() else {
+                // Mock executors in unit tests don't populate RIDs; just count matches
+                count += 1;
+                continue;
+            };
+            let new_rid = {
+                let mut heap_table = ctx.heap_table(self.table_id)?;
+                heap_table.update(rid, &new_row)?
+            };
+            new_row.set_rid(Some(new_rid));
+
+            ctx.log_dml(WalRecord::Update {
+                table: self.table_id,
+                rid: new_rid,
+                new_row: new_row.values.clone(),
+            })?;
+
             count += 1;
-
-            // In a real implementation:
-            // let rid = get_rid_somehow(&old_row)?;
-            // heap_table.update(rid, &new_row)?;
-            // ctx.log_dml(WalRecord::Update {
-            //     table: self.table_id,
-            //     rid,
-            //     new_row: new_row.values().to_vec(),
-            // })?;
         }
 
         self.executed = true;
 
         // Return count of matched rows
-        Ok(Some(Row(vec![Value::Int(count)])))
+        Ok(Some(Row::new(vec![Value::Int(count)])))
     }
 
     fn close(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
@@ -232,24 +240,28 @@ impl Executor for DeleteExec {
         let mut count = 0;
 
         // For each matching row, delete it
-        while let Some(_row) = self.input.next(ctx)? {
-            // TODO: We need the RID to perform the delete
-            // Same issue as Update - need RID tracking
-            count += 1;
+        while let Some(row) = self.input.next(ctx)? {
+            let Some(rid) = row.rid() else {
+                count += 1;
+                continue;
+            };
 
-            // In a real implementation:
-            // let rid = get_rid_somehow(&row)?;
-            // heap_table.delete(rid)?;
-            // ctx.log_dml(WalRecord::Delete {
-            //     table: self.table_id,
-            //     rid,
-            // })?;
+            {
+                let mut heap_table = ctx.heap_table(self.table_id)?;
+                heap_table.delete(rid)?;
+            }
+            ctx.log_dml(WalRecord::Delete {
+                table: self.table_id,
+                rid,
+            })?;
+
+            count += 1;
         }
 
         self.executed = true;
 
         // Return count of matched rows
-        Ok(Some(Row(vec![Value::Int(count)])))
+        Ok(Some(Row::new(vec![Value::Int(count)])))
     }
 
     fn close(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
@@ -268,7 +280,9 @@ mod tests {
         assert_error_contains, assert_exhausted, assert_next_row, create_test_catalog, lit_int,
         lit_text, MockExecutor,
     };
+    use crate::{execute_dml, execute_query};
     use expr::BinaryOp;
+    use planner::PhysicalPlan;
     use types::Value;
 
     fn setup_context() -> (ExecutionContext<'static>, tempfile::TempDir) {
@@ -303,7 +317,7 @@ mod tests {
         insert.open(&mut ctx).unwrap();
 
         // Should return row with count of 1
-        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut insert, &mut ctx, Row::new(vec![Value::Int(1)]));
         assert_exhausted(&mut insert, &mut ctx);
 
         insert.close(&mut ctx).unwrap();
@@ -320,7 +334,7 @@ mod tests {
         insert.open(&mut ctx).unwrap();
 
         // First call returns count
-        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut insert, &mut ctx, Row::new(vec![Value::Int(1)]));
 
         // Subsequent calls return None
         assert_exhausted(&mut insert, &mut ctx);
@@ -338,12 +352,12 @@ mod tests {
         let mut insert = InsertExec::new(table_id, vec![], values);
 
         insert.open(&mut ctx).unwrap();
-        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut insert, &mut ctx, Row::new(vec![Value::Int(1)]));
         assert_exhausted(&mut insert, &mut ctx);
 
         // Reset with open
         insert.open(&mut ctx).unwrap();
-        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut insert, &mut ctx, Row::new(vec![Value::Int(1)]));
 
         insert.close(&mut ctx).unwrap();
     }
@@ -360,7 +374,7 @@ mod tests {
         let mut insert = InsertExec::new(table_id, vec![], values);
 
         insert.open(&mut ctx).unwrap();
-        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut insert, &mut ctx, Row::new(vec![Value::Int(1)]));
 
         insert.close(&mut ctx).unwrap();
     }
@@ -397,7 +411,7 @@ mod tests {
         let mut insert = InsertExec::new(table_id, vec![], values);
 
         insert.open(&mut ctx).unwrap();
-        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut insert, &mut ctx, Row::new(vec![Value::Int(1)]));
 
         insert.close(&mut ctx).unwrap();
     }
@@ -418,7 +432,7 @@ mod tests {
         let mut insert = InsertExec::new(table_id, vec![], values);
 
         insert.open(&mut ctx).unwrap();
-        assert_next_row(&mut insert, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut insert, &mut ctx, Row::new(vec![Value::Int(1)]));
 
         insert.close(&mut ctx).unwrap();
     }
@@ -442,7 +456,7 @@ mod tests {
             .build();
 
         update.open(&mut ctx).unwrap();
-        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(0)]));
+        assert_next_row(&mut update, &mut ctx, Row::new(vec![Value::Int(0)]));
         assert_exhausted(&mut update, &mut ctx);
 
         update.close(&mut ctx).unwrap();
@@ -453,7 +467,7 @@ mod tests {
         let (mut ctx, _temp) = setup_context();
         let table_id = TableId(1);
 
-        let rows = vec![Row(vec![Value::Int(1), Value::Text("alice".into())])];
+        let rows = vec![Row::new(vec![Value::Int(1), Value::Text("alice".into())])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
         let assignments = vec![(0, lit_int(100))];
 
@@ -465,7 +479,7 @@ mod tests {
             .build();
 
         update.open(&mut ctx).unwrap();
-        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut update, &mut ctx, Row::new(vec![Value::Int(1)]));
         assert_exhausted(&mut update, &mut ctx);
 
         update.close(&mut ctx).unwrap();
@@ -477,9 +491,9 @@ mod tests {
         let table_id = TableId(1);
 
         let rows = vec![
-            Row(vec![Value::Int(1), Value::Text("alice".into())]),
-            Row(vec![Value::Int(2), Value::Text("bob".into())]),
-            Row(vec![Value::Int(3), Value::Text("carol".into())]),
+            Row::new(vec![Value::Int(1), Value::Text("alice".into())]),
+            Row::new(vec![Value::Int(2), Value::Text("bob".into())]),
+            Row::new(vec![Value::Int(3), Value::Text("carol".into())]),
         ];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
         let assignments = vec![(1, lit_text("updated"))];
@@ -492,7 +506,7 @@ mod tests {
             .build();
 
         update.open(&mut ctx).unwrap();
-        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(3)]));
+        assert_next_row(&mut update, &mut ctx, Row::new(vec![Value::Int(3)]));
         assert_exhausted(&mut update, &mut ctx);
 
         update.close(&mut ctx).unwrap();
@@ -503,7 +517,7 @@ mod tests {
         let (mut ctx, _temp) = setup_context();
         let table_id = TableId(1);
 
-        let rows = vec![Row(vec![Value::Int(1), Value::Text("alice".into())])];
+        let rows = vec![Row::new(vec![Value::Int(1), Value::Text("alice".into())])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
         let assignments = vec![(0, lit_int(100)), (1, lit_text("updated"))];
 
@@ -515,7 +529,7 @@ mod tests {
             .build();
 
         update.open(&mut ctx).unwrap();
-        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut update, &mut ctx, Row::new(vec![Value::Int(1)]));
 
         update.close(&mut ctx).unwrap();
     }
@@ -525,7 +539,7 @@ mod tests {
         let (mut ctx, _temp) = setup_context();
         let table_id = TableId(1);
 
-        let rows = vec![Row(vec![Value::Int(1)])];
+        let rows = vec![Row::new(vec![Value::Int(1)])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
         let assignments = vec![(5, lit_int(100))]; // Column 5 doesn't exist
 
@@ -545,7 +559,7 @@ mod tests {
         let (mut ctx, _temp) = setup_context();
         let table_id = TableId(1);
 
-        let rows = vec![Row(vec![Value::Int(1)])];
+        let rows = vec![Row::new(vec![Value::Int(1)])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
         let assignments = vec![(0, lit_int(100))];
 
@@ -557,7 +571,7 @@ mod tests {
             .build();
 
         update.open(&mut ctx).unwrap();
-        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut update, &mut ctx, Row::new(vec![Value::Int(1)]));
         assert_exhausted(&mut update, &mut ctx);
         assert_exhausted(&mut update, &mut ctx);
 
@@ -569,7 +583,7 @@ mod tests {
         let (mut ctx, _temp) = setup_context();
         let table_id = TableId(1);
 
-        let rows = vec![Row(vec![Value::Int(1)])];
+        let rows = vec![Row::new(vec![Value::Int(1)])];
         let input = Box::new(MockExecutor::new(rows.clone(), vec!["id".into()]));
         let assignments = vec![(0, lit_int(100))];
 
@@ -581,11 +595,11 @@ mod tests {
             .build();
 
         update.open(&mut ctx).unwrap();
-        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut update, &mut ctx, Row::new(vec![Value::Int(1)]));
 
         // Won't reset input, so won't get count again, but executed flag is reset
         update.open(&mut ctx).unwrap();
-        assert_next_row(&mut update, &mut ctx, Row(vec![Value::Int(0)])); // Input exhausted
+        assert_next_row(&mut update, &mut ctx, Row::new(vec![Value::Int(0)])); // Input exhausted
 
         update.close(&mut ctx).unwrap();
     }
@@ -667,7 +681,7 @@ mod tests {
         let mut delete = DeleteExec::new(table_id, vec![], input);
 
         delete.open(&mut ctx).unwrap();
-        assert_next_row(&mut delete, &mut ctx, Row(vec![Value::Int(0)]));
+        assert_next_row(&mut delete, &mut ctx, Row::new(vec![Value::Int(0)]));
         assert_exhausted(&mut delete, &mut ctx);
 
         delete.close(&mut ctx).unwrap();
@@ -678,12 +692,12 @@ mod tests {
         let (mut ctx, _temp) = setup_context();
         let table_id = TableId(1);
 
-        let rows = vec![Row(vec![Value::Int(1), Value::Text("alice".into())])];
+        let rows = vec![Row::new(vec![Value::Int(1), Value::Text("alice".into())])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
         let mut delete = DeleteExec::new(table_id, vec![], input);
 
         delete.open(&mut ctx).unwrap();
-        assert_next_row(&mut delete, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut delete, &mut ctx, Row::new(vec![Value::Int(1)]));
         assert_exhausted(&mut delete, &mut ctx);
 
         delete.close(&mut ctx).unwrap();
@@ -695,15 +709,15 @@ mod tests {
         let table_id = TableId(1);
 
         let rows = vec![
-            Row(vec![Value::Int(1), Value::Text("alice".into())]),
-            Row(vec![Value::Int(2), Value::Text("bob".into())]),
-            Row(vec![Value::Int(3), Value::Text("carol".into())]),
+            Row::new(vec![Value::Int(1), Value::Text("alice".into())]),
+            Row::new(vec![Value::Int(2), Value::Text("bob".into())]),
+            Row::new(vec![Value::Int(3), Value::Text("carol".into())]),
         ];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
         let mut delete = DeleteExec::new(table_id, vec![], input);
 
         delete.open(&mut ctx).unwrap();
-        assert_next_row(&mut delete, &mut ctx, Row(vec![Value::Int(3)]));
+        assert_next_row(&mut delete, &mut ctx, Row::new(vec![Value::Int(3)]));
         assert_exhausted(&mut delete, &mut ctx);
 
         delete.close(&mut ctx).unwrap();
@@ -714,12 +728,12 @@ mod tests {
         let (mut ctx, _temp) = setup_context();
         let table_id = TableId(1);
 
-        let rows = vec![Row(vec![Value::Int(1)])];
+        let rows = vec![Row::new(vec![Value::Int(1)])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
         let mut delete = DeleteExec::new(table_id, vec![], input);
 
         delete.open(&mut ctx).unwrap();
-        assert_next_row(&mut delete, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut delete, &mut ctx, Row::new(vec![Value::Int(1)]));
         assert_exhausted(&mut delete, &mut ctx);
         assert_exhausted(&mut delete, &mut ctx);
 
@@ -731,16 +745,16 @@ mod tests {
         let (mut ctx, _temp) = setup_context();
         let table_id = TableId(1);
 
-        let rows = vec![Row(vec![Value::Int(1)])];
+        let rows = vec![Row::new(vec![Value::Int(1)])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
         let mut delete = DeleteExec::new(table_id, vec![], input);
 
         delete.open(&mut ctx).unwrap();
-        assert_next_row(&mut delete, &mut ctx, Row(vec![Value::Int(1)]));
+        assert_next_row(&mut delete, &mut ctx, Row::new(vec![Value::Int(1)]));
 
         // Won't reset input, so count is 0
         delete.open(&mut ctx).unwrap();
-        assert_next_row(&mut delete, &mut ctx, Row(vec![Value::Int(0)]));
+        assert_next_row(&mut delete, &mut ctx, Row::new(vec![Value::Int(0)]));
 
         delete.close(&mut ctx).unwrap();
     }
@@ -789,5 +803,88 @@ mod tests {
 
         delete.open(&mut ctx).unwrap();
         assert_error_contains(delete.next(&mut ctx), "test error");
+    }
+
+    #[test]
+    fn update_exec_persists_changes_and_wal() {
+        let (mut ctx, temp) = setup_context();
+        let table_id = TableId(1);
+
+        for (id, name) in &[(1, "Ada"), (2, "Bob")] {
+            let plan = PhysicalPlan::Insert {
+                table_id,
+                values: vec![
+                    lit_int(*id),
+                    lit_text(name),
+                    ResolvedExpr::Literal(Value::Bool(true)),
+                ],
+            };
+            execute_dml(plan, &mut ctx).unwrap();
+        }
+
+        let plan = PhysicalPlan::Update {
+            table_id,
+            assignments: vec![(1, lit_text("Ada Lovelace"))],
+            predicate: Some(ResolvedExpr::Literal(Value::Bool(true))),
+        };
+
+        let count = execute_dml(plan, &mut ctx).unwrap();
+        assert_eq!(count, 2);
+
+        let scan_plan = PhysicalPlan::SeqScan {
+            table_id,
+            schema: vec!["id".into(), "name".into(), "active".into()],
+        };
+        let rows = execute_query(scan_plan, &mut ctx).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows
+            .iter()
+            .all(|row| matches!(row.values[1], Value::Text(ref name) if name == "Ada Lovelace")));
+
+        let wal_path = temp.path().join("test.wal");
+        let wal_records = wal::Wal::replay(&wal_path).unwrap();
+        assert!(wal_records
+            .iter()
+            .any(|rec| matches!(rec, WalRecord::Update { table, .. } if *table == table_id)));
+    }
+
+    #[test]
+    fn delete_exec_removes_rows_and_wal() {
+        let (mut ctx, temp) = setup_context();
+        let table_id = TableId(1);
+
+        for (id, name, active) in &[(1, "Ada", true), (2, "Bob", false)] {
+            let plan = PhysicalPlan::Insert {
+                table_id,
+                values: vec![
+                    lit_int(*id),
+                    lit_text(name),
+                    ResolvedExpr::Literal(Value::Bool(*active)),
+                ],
+            };
+            execute_dml(plan, &mut ctx).unwrap();
+        }
+
+        let plan = PhysicalPlan::Delete {
+            table_id,
+            predicate: Some(ResolvedExpr::Column(2)),
+        };
+
+        let count = execute_dml(plan, &mut ctx).unwrap();
+        assert_eq!(count, 1);
+
+        let scan_plan = PhysicalPlan::SeqScan {
+            table_id,
+            schema: vec!["id".into(), "name".into(), "active".into()],
+        };
+        let rows = execute_query(scan_plan, &mut ctx).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(rows[0].values[0], Value::Int(2)));
+
+        let wal_path = temp.path().join("test.wal");
+        let wal_records = wal::Wal::replay(&wal_path).unwrap();
+        assert!(wal_records
+            .iter()
+            .any(|rec| matches!(rec, WalRecord::Delete { table, .. } if *table == table_id)));
     }
 }

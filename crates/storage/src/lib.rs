@@ -145,7 +145,7 @@ impl Slot {
 pub trait HeapTable {
     fn insert(&mut self, row: &Row) -> DbResult<RecordId>;
     fn get(&mut self, rid: RecordId) -> DbResult<Row>;
-    fn update(&mut self, rid: RecordId, row: &Row) -> DbResult<()>;
+    fn update(&mut self, rid: RecordId, row: &Row) -> DbResult<RecordId>;
     fn delete(&mut self, rid: RecordId) -> DbResult<()>;
 }
 
@@ -252,15 +252,44 @@ impl HeapTable for HeapFile {
         }
         let start = slot.offset as usize;
         let end = start + slot.len as usize;
-        let (row, _) = decode_from_slice(&page.data[start..end], bincode_config())
-            .map_err(|e| DbError::Storage(format!("deserialize row failed: {e}")))?;
+        let (mut row, _): (Row, usize) =
+            decode_from_slice(&page.data[start..end], bincode_config())
+                .map_err(|e| DbError::Storage(format!("deserialize row failed: {e}")))?;
+        row.set_rid(Some(rid));
         Ok(row)
     }
 
-    fn update(&mut self, rid: RecordId, row: &Row) -> DbResult<()> {
+    fn update(&mut self, rid: RecordId, row: &Row) -> DbResult<RecordId> {
+        self.ensure_page_exists(rid.page_id.0)?;
+        let mut page = self.read_page(rid.page_id.0)?;
+        let header = page.header()?;
+        if rid.slot >= header.num_slots {
+            return Err(DbError::Storage(format!("invalid slot {}", rid.slot)));
+        }
+
+        let mut slot = page.read_slot(rid.slot)?;
+        if slot.is_empty() {
+            return Err(DbError::Storage("slot empty".into()));
+        }
+
+        let bytes = encode_to_vec(row, bincode_config())
+            .map_err(|e| DbError::Storage(format!("serialize row failed: {e}")))?;
+
+        if bytes.len() <= slot.len as usize {
+            let start = slot.offset as usize;
+            let end = start + bytes.len();
+            page.data[start..end].copy_from_slice(&bytes);
+            if bytes.len() != slot.len as usize {
+                slot.len = bytes.len() as u16;
+                page.write_slot(rid.slot, &slot)?;
+            }
+            self.write_page(&page)?;
+            return Ok(rid);
+        }
+
+        // If the new row doesn't fit, delete and reinsert to obtain a new RID
         self.delete(rid)?;
-        self.insert(row)?;
-        Ok(())
+        self.insert(row)
     }
 
     fn delete(&mut self, rid: RecordId) -> DbResult<()> {

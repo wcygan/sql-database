@@ -7,7 +7,7 @@ fn schema(cols: &[&str]) -> Vec<String> {
 
 #[test]
 fn eval_literals_and_columns() {
-    let row = Row(vec![Int(1), Text("Will".into()), Bool(true)]);
+    let row = Row::new(vec![Int(1), Text("Will".into()), Bool(true)]);
     let schema = schema(&["id", "name", "active"]);
     let ctx = EvalContext { schema: &schema };
 
@@ -20,7 +20,7 @@ fn eval_literals_and_columns() {
 
 #[test]
 fn eval_comparisons() {
-    let row = Row(vec![Int(10), Int(20)]);
+    let row = Row::new(vec![Int(10), Int(20)]);
     let schema = schema(&["a", "b"]);
     let ctx = EvalContext { schema: &schema };
 
@@ -34,7 +34,7 @@ fn eval_comparisons() {
 
 #[test]
 fn eval_logical_ops() {
-    let row = Row(vec![Bool(true), Bool(false)]);
+    let row = Row::new(vec![Bool(true), Bool(false)]);
     let schema = schema(&["x", "y"]);
     let ctx = EvalContext { schema: &schema };
 
@@ -63,7 +63,7 @@ fn or_operator_truth_table() {
         (true, true, true),
     ] {
         let result = ctx
-            .eval(&expr, &Row(vec![Bool(lhs), Bool(rhs)]))
+            .eval(&expr, &Row::new(vec![Bool(lhs), Bool(rhs)]))
             .unwrap_or_else(|e| panic!("unexpected error for ({lhs}, {rhs}): {e:?}"));
         match result {
             Bool(actual) => assert_eq!(
@@ -77,7 +77,7 @@ fn or_operator_truth_table() {
 
 #[test]
 fn not_operator() {
-    let row = Row(vec![Bool(false)]);
+    let row = Row::new(vec![Bool(false)]);
     let schema = schema(&["f"]);
     let ctx = EvalContext { schema: &schema };
 
@@ -90,7 +90,7 @@ fn not_operator() {
 
 #[test]
 fn mismatched_types_fail() {
-    let row = Row(vec![Int(1), Text("hi".into())]);
+    let row = Row::new(vec![Int(1), Text("hi".into())]);
     let schema = schema(&["a", "b"]);
     let ctx = EvalContext { schema: &schema };
 
@@ -106,7 +106,7 @@ fn mismatched_types_fail() {
 
 #[test]
 fn not_operator_requires_bool_input() {
-    let row = Row(vec![Int(0)]);
+    let row = Row::new(vec![Int(0)]);
     let schema = schema(&["flag"]);
     let ctx = EvalContext { schema: &schema };
 
@@ -121,7 +121,7 @@ fn not_operator_requires_bool_input() {
 
 #[test]
 fn logical_ops_require_boolean_operands() {
-    let row = Row(vec![Bool(true), Int(1)]);
+    let row = Row::new(vec![Bool(true), Int(1)]);
     let schema = schema(&["a", "b"]);
     let ctx = EvalContext { schema: &schema };
 
@@ -147,7 +147,7 @@ fn comparison_variants_cover_all_orderings() {
             op,
             right: Box::new(Expr::Literal(Int(right))),
         };
-        match ctx.eval(&expr, &Row(vec![])).unwrap() {
+        match ctx.eval(&expr, &Row::new(vec![])).unwrap() {
             Bool(b) => b,
             other => panic!("expected bool, got {other:?}"),
         }

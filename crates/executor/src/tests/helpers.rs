@@ -139,24 +139,24 @@ pub fn create_test_catalog() -> Catalog {
 
 /// Create a row with integer values.
 pub fn int_row(values: &[i64]) -> Row {
-    Row(values.iter().map(|&v| Value::Int(v)).collect())
+    Row::new(values.iter().map(|&v| Value::Int(v)).collect())
 }
 
 /// Create a row with text values.
 pub fn text_row(values: &[&str]) -> Row {
-    Row(values.iter().map(|&v| Value::Text(v.to_string())).collect())
+    Row::new(values.iter().map(|&v| Value::Text(v.to_string())).collect())
 }
 
 /// Create a row with boolean values.
 #[allow(dead_code)]
 pub fn bool_row(values: &[bool]) -> Row {
-    Row(values.iter().map(|&v| Value::Bool(v)).collect())
+    Row::new(values.iter().map(|&v| Value::Bool(v)).collect())
 }
 
 /// Create a row with mixed values.
 #[allow(dead_code)]
 pub fn make_row(values: Vec<Value>) -> Row {
-    Row(values)
+    Row::new(values)
 }
 
 // Expression builders
@@ -214,7 +214,7 @@ pub fn unary(op: UnaryOp, expr: ResolvedExpr) -> ResolvedExpr {
 /// Assert that next() returns the expected row.
 pub fn assert_next_row(exec: &mut dyn Executor, ctx: &mut ExecutionContext, expected: Row) {
     match exec.next(ctx) {
-        Ok(Some(row)) => assert_eq!(row.0, expected.0, "row mismatch"),
+        Ok(Some(row)) => assert_eq!(row.values, expected.values, "row mismatch"),
         Ok(None) => panic!("expected row, got None"),
         Err(e) => panic!("expected row, got error: {}", e),
     }

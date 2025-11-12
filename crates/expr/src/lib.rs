@@ -57,7 +57,7 @@ impl<'a> EvalContext<'a> {
                     .iter()
                     .position(|c| c.eq_ignore_ascii_case(name))
                     .ok_or_else(|| DbError::Executor(format!("unknown column '{name}'")))?;
-                Ok(row.0[idx].clone())
+                Ok(row.values[idx].clone())
             }
             Expr::Unary { op, expr } => {
                 let v = self.eval(expr, row)?;

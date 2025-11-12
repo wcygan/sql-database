@@ -275,7 +275,7 @@ mod tests {
         let table_id = TableId(1);
 
         // Insert a row
-        let rows = vec![Row(vec![
+        let rows = vec![Row::new(vec![
             Value::Int(1),
             Value::Text("alice".into()),
             Value::Bool(true),
@@ -289,7 +289,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
@@ -306,17 +306,17 @@ mod tests {
 
         // Insert multiple rows
         let rows = vec![
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(3),
                 Value::Text("carol".into()),
                 Value::Bool(true),
@@ -331,7 +331,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
@@ -340,7 +340,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
@@ -349,7 +349,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(3),
                 Value::Text("carol".into()),
                 Value::Bool(true),
@@ -375,12 +375,12 @@ mod tests {
 
         // Insert rows
         let rows = vec![
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
@@ -396,7 +396,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
@@ -408,7 +408,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
@@ -417,7 +417,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
@@ -446,12 +446,12 @@ mod tests {
 
         // Insert rows
         let rows = vec![
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
@@ -474,7 +474,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
@@ -483,7 +483,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
@@ -555,17 +555,17 @@ mod tests {
 
         // Insert rows
         let rows = vec![
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(3),
                 Value::Text("carol".into()),
                 Value::Bool(true),
@@ -589,7 +589,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
@@ -598,7 +598,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
@@ -607,7 +607,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(3),
                 Value::Text("carol".into()),
                 Value::Bool(true),
@@ -664,12 +664,12 @@ mod tests {
 
         // Insert rows
         let rows = vec![
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
@@ -692,7 +692,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
@@ -704,7 +704,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
@@ -713,7 +713,7 @@ mod tests {
         assert_next_row(
             &mut scan,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
@@ -746,14 +746,17 @@ mod tests {
         let mut ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
 
         // Insert rows
-        let rows = vec![Row(vec![Value::Int(10)]), Row(vec![Value::Int(20)])];
+        let rows = vec![
+            Row::new(vec![Value::Int(10)]),
+            Row::new(vec![Value::Int(20)]),
+        ];
         insert_test_rows(&mut ctx, table_id, rows).unwrap();
 
         let mut scan = SeqScanExec::new(table_id, vec!["value".into()]);
 
         scan.open(&mut ctx).unwrap();
-        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(10)]));
-        assert_next_row(&mut scan, &mut ctx, Row(vec![Value::Int(20)]));
+        assert_next_row(&mut scan, &mut ctx, Row::new(vec![Value::Int(10)]));
+        assert_next_row(&mut scan, &mut ctx, Row::new(vec![Value::Int(20)]));
         assert_exhausted(&mut scan, &mut ctx);
         scan.close(&mut ctx).unwrap();
     }

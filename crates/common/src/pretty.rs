@@ -35,8 +35,8 @@ pub fn render_record_batch(batch: &RecordBatch, style: TableStyleKind) -> String
             let mut builder = Builder::default();
             builder.push_record(batch.columns.iter().cloned());
 
-            for Row(values) in &batch.rows {
-                builder.push_record(values.iter().map(format_value));
+            for row in &batch.rows {
+                builder.push_record(row.values.iter().map(format_value));
             }
 
             let mut table = builder.build();
@@ -97,8 +97,8 @@ fn render_value_only_rows(rows: &[Row], style: TableStyleKind) -> String {
 
     let data: Vec<ValueOnlyRow> = rows
         .iter()
-        .map(|Row(values)| ValueOnlyRow {
-            values: format_row(values),
+        .map(|row| ValueOnlyRow {
+            values: format_row(&row.values),
         })
         .collect();
 
@@ -113,7 +113,7 @@ mod tests {
     fn record_batch_with_columns_renders_headers() {
         let batch = RecordBatch {
             columns: vec!["id".into(), "name".into()],
-            rows: vec![Row(vec![Value::Int(1), Value::Text("Ada".into())])],
+            rows: vec![Row::new(vec![Value::Int(1), Value::Text("Ada".into())])],
         };
 
         let rendered = render_record_batch(&batch, TableStyleKind::Modern);

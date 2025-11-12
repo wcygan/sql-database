@@ -30,26 +30,31 @@ impl Executor for ProjectExec {
             None => return Ok(None),
         };
 
+        let rid = row.rid();
+
         // Project columns by evaluating each column reference
         let mut projected_values = Vec::with_capacity(self.projections.len());
 
         for (_name, col_id) in &self.projections {
             let idx = *col_id as usize;
             let value = row
-                .0
+                .values
                 .get(idx)
                 .ok_or_else(|| {
                     common::DbError::Executor(format!(
                         "column index {} out of bounds (row has {} columns)",
                         idx,
-                        row.0.len()
+                        row.values.len()
                     ))
                 })?
                 .clone();
             projected_values.push(value);
         }
 
-        Ok(Some(Row(projected_values)))
+        let mut projected = Row::new(projected_values);
+        projected.set_rid(rid);
+
+        Ok(Some(projected))
     }
 
     fn close(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
@@ -87,12 +92,12 @@ mod tests {
     #[test]
     fn project_single_column() {
         let rows = vec![
-            Row(vec![
+            Row::new(vec![
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
             ]),
-            Row(vec![
+            Row::new(vec![
                 Value::Int(2),
                 Value::Text("bob".into()),
                 Value::Bool(false),
@@ -115,9 +120,13 @@ mod tests {
         assert_next_row(
             &mut project,
             &mut ctx,
-            Row(vec![Value::Text("alice".into())]),
+            Row::new(vec![Value::Text("alice".into())]),
         );
-        assert_next_row(&mut project, &mut ctx, Row(vec![Value::Text("bob".into())]));
+        assert_next_row(
+            &mut project,
+            &mut ctx,
+            Row::new(vec![Value::Text("bob".into())]),
+        );
         assert_exhausted(&mut project, &mut ctx);
 
         project.close(&mut ctx).unwrap();
@@ -125,7 +134,7 @@ mod tests {
 
     #[test]
     fn project_multiple_columns() {
-        let rows = vec![Row(vec![
+        let rows = vec![Row::new(vec![
             Value::Int(1),
             Value::Text("alice".into()),
             Value::Bool(true),
@@ -145,7 +154,7 @@ mod tests {
         assert_next_row(
             &mut project,
             &mut ctx,
-            Row(vec![Value::Int(1), Value::Bool(true)]),
+            Row::new(vec![Value::Int(1), Value::Bool(true)]),
         );
         assert_exhausted(&mut project, &mut ctx);
 
@@ -154,7 +163,7 @@ mod tests {
 
     #[test]
     fn project_reorder_columns() {
-        let rows = vec![Row(vec![
+        let rows = vec![Row::new(vec![
             Value::Int(1),
             Value::Text("alice".into()),
             Value::Bool(true),
@@ -178,7 +187,7 @@ mod tests {
         assert_next_row(
             &mut project,
             &mut ctx,
-            Row(vec![
+            Row::new(vec![
                 Value::Bool(true),
                 Value::Text("alice".into()),
                 Value::Int(1),
@@ -191,7 +200,7 @@ mod tests {
 
     #[test]
     fn project_duplicate_column() {
-        let rows = vec![Row(vec![Value::Int(42), Value::Text("test".into())])];
+        let rows = vec![Row::new(vec![Value::Int(42), Value::Text("test".into())])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
 
         // Project same column twice
@@ -204,7 +213,7 @@ mod tests {
         assert_next_row(
             &mut project,
             &mut ctx,
-            Row(vec![Value::Int(42), Value::Int(42)]),
+            Row::new(vec![Value::Int(42), Value::Int(42)]),
         );
         assert_exhausted(&mut project, &mut ctx);
 
@@ -226,7 +235,7 @@ mod tests {
 
     #[test]
     fn project_column_out_of_bounds_returns_error() {
-        let rows = vec![Row(vec![Value::Int(1), Value::Text("alice".into())])];
+        let rows = vec![Row::new(vec![Value::Int(1), Value::Text("alice".into())])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
 
         // Try to project column 5 which doesn't exist
@@ -241,7 +250,7 @@ mod tests {
 
     #[test]
     fn project_first_column() {
-        let rows = vec![Row(vec![Value::Int(100), Value::Text("data".into())])];
+        let rows = vec![Row::new(vec![Value::Int(100), Value::Text("data".into())])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
 
         let projections = vec![("id".to_string(), 0)];
@@ -250,7 +259,7 @@ mod tests {
         let (mut ctx, _temp) = setup_context();
 
         project.open(&mut ctx).unwrap();
-        assert_next_row(&mut project, &mut ctx, Row(vec![Value::Int(100)]));
+        assert_next_row(&mut project, &mut ctx, Row::new(vec![Value::Int(100)]));
         assert_exhausted(&mut project, &mut ctx);
 
         project.close(&mut ctx).unwrap();
@@ -258,7 +267,7 @@ mod tests {
 
     #[test]
     fn project_last_column() {
-        let rows = vec![Row(vec![
+        let rows = vec![Row::new(vec![
             Value::Int(1),
             Value::Text("alice".into()),
             Value::Bool(true),
@@ -274,7 +283,7 @@ mod tests {
         let (mut ctx, _temp) = setup_context();
 
         project.open(&mut ctx).unwrap();
-        assert_next_row(&mut project, &mut ctx, Row(vec![Value::Bool(true)]));
+        assert_next_row(&mut project, &mut ctx, Row::new(vec![Value::Bool(true)]));
         assert_exhausted(&mut project, &mut ctx);
 
         project.close(&mut ctx).unwrap();
@@ -282,7 +291,7 @@ mod tests {
 
     #[test]
     fn project_open_delegates_to_input() {
-        let rows = vec![Row(vec![Value::Int(1)])];
+        let rows = vec![Row::new(vec![Value::Int(1)])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
 
         let projections = vec![("id".to_string(), 0)];
@@ -296,7 +305,7 @@ mod tests {
 
     #[test]
     fn project_close_delegates_to_input() {
-        let rows = vec![Row(vec![Value::Int(1)])];
+        let rows = vec![Row::new(vec![Value::Int(1)])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
 
         let projections = vec![("id".to_string(), 0)];

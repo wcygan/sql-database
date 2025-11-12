@@ -19,10 +19,10 @@ fn db_error_formats_cleanly() {
 fn recordbatch_consistency() {
     let rb = RecordBatch {
         columns: vec!["id".into()],
-        rows: vec![Row(vec![Value::Int(1)])],
+        rows: vec![Row::new(vec![Value::Int(1)])],
     };
     assert_eq!(rb.columns.len(), 1);
-    assert_eq!(rb.rows[0].0.len(), 1);
+    assert_eq!(rb.rows[0].values.len(), 1);
 }
 
 #[test]

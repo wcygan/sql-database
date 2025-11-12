@@ -44,11 +44,49 @@ pub struct RecordId {
 
 /// Positional row representation backed by `types::Value`.
 /// Examples:
-/// - `let row = Row(vec![Value::Int(1)]);`
-/// - `let row = Row(vec![Value::Text("alice".into()), Value::Bool(true)]);`
-/// - `let row = Row(vec![Value::Int(10), Value::Null]);`
+/// - `let row = Row::new(vec![Value::Int(1)]);`
+/// - `let row = Row::new(vec![Value::Text("alice".into()), Value::Bool(true)]);`
+/// - `let row = Row::new(vec![Value::Int(10), Value::Null]);`
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Row(pub Vec<Value>);
+pub struct Row {
+    pub values: Vec<Value>,
+    #[serde(skip)]
+    #[serde(default)]
+    rid: Option<RecordId>,
+}
+
+impl Row {
+    pub fn new(values: Vec<Value>) -> Self {
+        Self { values, rid: None }
+    }
+
+    pub fn from_values(values: Vec<Value>) -> Self {
+        Self::new(values)
+    }
+
+    pub fn with_rid(mut self, rid: RecordId) -> Self {
+        self.rid = Some(rid);
+        self
+    }
+
+    pub fn set_rid(&mut self, rid: Option<RecordId>) {
+        self.rid = rid;
+    }
+
+    pub fn rid(&self) -> Option<RecordId> {
+        self.rid
+    }
+
+    pub fn into_values(self) -> Vec<Value> {
+        self.values
+    }
+}
+
+impl From<Vec<Value>> for Row {
+    fn from(values: Vec<Value>) -> Self {
+        Row::new(values)
+    }
+}
 
 /// Named projection of a row keyed by column name.
 /// Examples:
@@ -60,9 +98,9 @@ pub type RowMap = HashMap<String, Value>;
 
 /// Rectangular result set carrying column labels and rows.
 /// Examples:
-/// - `let rb = RecordBatch { columns: vec!["id".into()], rows: vec![Row(vec![Value::Int(1)])] };`
-/// - `let rb = RecordBatch { columns: vec!["id".into(), "name".into()], rows: vec![Row(vec![Value::Int(1), Value::Text("alice".into())])] };`
-/// - `let rb = RecordBatch { columns: vec!["count".into()], rows: vec![Row(vec![Value::Int(42)]), Row(vec![Value::Int(84)])] };`
+/// - `let rb = RecordBatch { columns: vec!["id".into()], rows: vec![Row::new(vec![Value::Int(1)])] };`
+/// - `let rb = RecordBatch { columns: vec!["id".into(), "name".into()], rows: vec![Row::new(vec![Value::Int(1), Value::Text("alice".into())])] };`
+/// - `let rb = RecordBatch { columns: vec!["count".into()], rows: vec![Row::new(vec![Value::Int(42)]), Row::new(vec![Value::Int(84)])] };`
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecordBatch {
     pub columns: Vec<String>,
