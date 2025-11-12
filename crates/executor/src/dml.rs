@@ -337,12 +337,13 @@ impl Executor for DeleteExec {
 mod tests {
     use super::*;
     use crate::tests::helpers::{
-        assert_error_contains, assert_exhausted, assert_next_row, create_test_catalog, lit_int,
-        lit_text, MockExecutor,
+        assert_error_contains, assert_exhausted, assert_next_row, create_test_catalog,
+        MockExecutor,
     };
     use crate::{execute_dml, execute_query};
     use expr::BinaryOp;
     use planner::PhysicalPlan;
+    use testsupport::prelude::*;
     use types::Value;
 
     fn setup_context() -> (ExecutionContext<'static>, tempfile::TempDir) {
@@ -368,8 +369,8 @@ mod tests {
         let table_id = TableId(1);
 
         let values = vec![
-            lit_int(1),
-            lit_text("alice"),
+            lit!(int: 1),
+            lit!(text: "alice"),
             ResolvedExpr::Literal(Value::Bool(true)),
         ];
         let mut insert = InsertExec::new(table_id, vec![], values);
@@ -388,7 +389,7 @@ mod tests {
         let (mut ctx, _temp) = setup_context();
         let table_id = TableId(1);
 
-        let values = vec![lit_int(42)];
+        let values = vec![lit!(int: 42)];
         let mut insert = InsertExec::new(table_id, vec![], values);
 
         insert.open(&mut ctx).unwrap();
@@ -408,7 +409,7 @@ mod tests {
         let (mut ctx, _temp) = setup_context();
         let table_id = TableId(1);
 
-        let values = vec![lit_int(1)];
+        let values = vec![lit!(int: 1)];
         let mut insert = InsertExec::new(table_id, vec![], values);
 
         insert.open(&mut ctx).unwrap();
@@ -442,7 +443,7 @@ mod tests {
     #[test]
     fn insert_schema_empty() {
         let table_id = TableId(1);
-        let insert = InsertExec::new(table_id, vec![], vec![lit_int(1)]);
+        let insert = InsertExec::new(table_id, vec![], vec![lit!(int: 1)]);
 
         assert_eq!(insert.schema().len(), 0);
     }
@@ -464,8 +465,8 @@ mod tests {
         let table_id = TableId(1);
 
         let values = vec![
-            lit_int(1),
-            lit_text("alice"),
+            lit!(int: 1),
+            lit!(text: "alice"),
             ResolvedExpr::Literal(Value::Bool(true)),
         ];
         let mut insert = InsertExec::new(table_id, vec![], values);
@@ -482,11 +483,7 @@ mod tests {
         let table_id = TableId(1);
 
         // Use binary expression (though it doesn't have row context)
-        let expr = ResolvedExpr::Binary {
-            left: Box::new(lit_int(10)),
-            op: BinaryOp::Eq,
-            right: Box::new(lit_int(10)),
-        };
+        let expr = binary!(lit!(int: 10), BinaryOp::Eq, lit!(int: 10));
 
         let values = vec![expr];
         let mut insert = InsertExec::new(table_id, vec![], values);
@@ -506,7 +503,7 @@ mod tests {
 
         // Empty input
         let input = Box::new(MockExecutor::new(vec![], vec![]));
-        let assignments = vec![(0, lit_int(100))];
+        let assignments = vec![(0, lit!(int: 100))];
 
         let mut update = UpdateExec::builder()
             .table_id(table_id)
@@ -529,7 +526,7 @@ mod tests {
 
         let rows = vec![Row::new(vec![Value::Int(1), Value::Text("alice".into())])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
-        let assignments = vec![(0, lit_int(100))];
+        let assignments = vec![(0, lit!(int: 100))];
 
         let mut update = UpdateExec::builder()
             .table_id(table_id)
@@ -556,7 +553,7 @@ mod tests {
             Row::new(vec![Value::Int(3), Value::Text("carol".into())]),
         ];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
-        let assignments = vec![(1, lit_text("updated"))];
+        let assignments = vec![(1, lit!(text: "updated"))];
 
         let mut update = UpdateExec::builder()
             .table_id(table_id)
@@ -579,7 +576,7 @@ mod tests {
 
         let rows = vec![Row::new(vec![Value::Int(1), Value::Text("alice".into())])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "name".into()]));
-        let assignments = vec![(0, lit_int(100)), (1, lit_text("updated"))];
+        let assignments = vec![(0, lit!(int: 100)), (1, lit!(text: "updated"))];
 
         let mut update = UpdateExec::builder()
             .table_id(table_id)
@@ -601,7 +598,7 @@ mod tests {
 
         let rows = vec![Row::new(vec![Value::Int(1)])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
-        let assignments = vec![(5, lit_int(100))]; // Column 5 doesn't exist
+        let assignments = vec![(5, lit!(int: 100))]; // Column 5 doesn't exist
 
         let mut update = UpdateExec::builder()
             .table_id(table_id)
@@ -621,7 +618,7 @@ mod tests {
 
         let rows = vec![Row::new(vec![Value::Int(1)])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
-        let assignments = vec![(0, lit_int(100))];
+        let assignments = vec![(0, lit!(int: 100))];
 
         let mut update = UpdateExec::builder()
             .table_id(table_id)
@@ -645,7 +642,7 @@ mod tests {
 
         let rows = vec![Row::new(vec![Value::Int(1)])];
         let input = Box::new(MockExecutor::new(rows.clone(), vec!["id".into()]));
-        let assignments = vec![(0, lit_int(100))];
+        let assignments = vec![(0, lit!(int: 100))];
 
         let mut update = UpdateExec::builder()
             .table_id(table_id)
@@ -723,7 +720,7 @@ mod tests {
             .table_id(table_id)
             .schema(vec![])
             .input(input)
-            .assignments(vec![(0, lit_int(1))])
+            .assignments(vec![(0, lit!(int: 1))])
             .build();
 
         update.open(&mut ctx).unwrap();
@@ -874,8 +871,8 @@ mod tests {
             let plan = PhysicalPlan::Insert {
                 table_id,
                 values: vec![
-                    lit_int(*id),
-                    lit_text(name),
+                    lit!(int: *id),
+                    lit!(text: name),
                     ResolvedExpr::Literal(Value::Bool(true)),
                 ],
             };
@@ -884,7 +881,7 @@ mod tests {
 
         let plan = PhysicalPlan::Update {
             table_id,
-            assignments: vec![(1, lit_text("Ada Lovelace"))],
+            assignments: vec![(1, lit!(text: "Ada Lovelace"))],
             predicate: Some(ResolvedExpr::Literal(Value::Bool(true))),
         };
 
@@ -917,8 +914,8 @@ mod tests {
             let plan = PhysicalPlan::Insert {
                 table_id,
                 values: vec![
-                    lit_int(*id),
-                    lit_text(name),
+                    lit!(int: *id),
+                    lit!(text: name),
                     ResolvedExpr::Literal(Value::Bool(*active)),
                 ],
             };

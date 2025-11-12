@@ -20,3 +20,4 @@ wal = { workspace = true }
 proptest = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
+testsupport = { workspace = true }

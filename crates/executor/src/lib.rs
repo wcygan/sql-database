@@ -46,8 +46,9 @@ mod tests {
     pub mod helpers;
 
     use super::*;
-    use helpers::{create_test_catalog, lit_int, lit_text};
+    use helpers::create_test_catalog;
     use planner::{PhysicalPlan, ResolvedExpr};
+    use testsupport::prelude::*;
     use types::Value;
 
     fn setup_context() -> (ExecutionContext<'static>, tempfile::TempDir) {
@@ -264,8 +265,8 @@ mod tests {
         let plan = PhysicalPlan::Insert {
             table_id: TableId(1),
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(true)),
             ],
         };
@@ -296,7 +297,7 @@ mod tests {
 
         let plan = PhysicalPlan::Update {
             table_id,
-            assignments: vec![(1, lit_text("updated"))],
+            assignments: vec![(1, lit!(text: "updated"))],
             predicate: None,
         };
 
@@ -354,7 +355,7 @@ mod tests {
         // So we'll test the Insert success path instead
         let plan = PhysicalPlan::Insert {
             table_id: TableId(1),
-            values: vec![lit_int(1)],
+            values: vec![lit!(int: 1)],
         };
 
         let result = execute_dml(plan, &mut ctx);
@@ -406,7 +407,7 @@ mod tests {
 
         let plan = PhysicalPlan::Insert {
             table_id: TableId(999),
-            values: vec![lit_int(1)],
+            values: vec![lit!(int: 1)],
         };
 
         let result = execute_dml(plan, &mut ctx);
@@ -567,8 +568,8 @@ mod tests {
         let plan1 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(true)),
             ],
         };
@@ -578,8 +579,8 @@ mod tests {
         let plan2 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("bob"),
+                lit!(int: 1),
+                lit!(text: "bob"),
                 ResolvedExpr::Literal(Value::Bool(false)),
             ],
         };
@@ -621,8 +622,8 @@ mod tests {
         let plan1 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(true)),
             ],
         };
@@ -632,8 +633,8 @@ mod tests {
         let plan2 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(false)),
             ],
         };
@@ -675,8 +676,8 @@ mod tests {
         let plan1 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(true)),
             ],
         };
@@ -685,8 +686,8 @@ mod tests {
         let plan2 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("bob"),
+                lit!(int: 1),
+                lit!(text: "bob"),
                 ResolvedExpr::Literal(Value::Bool(false)),
             ],
         };
@@ -695,8 +696,8 @@ mod tests {
         let plan3 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(2),
-                lit_text("alice"),
+                lit!(int: 2),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(true)),
             ],
         };
@@ -743,8 +744,8 @@ mod tests {
         let plan1 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(true)),
             ],
         };
@@ -754,8 +755,8 @@ mod tests {
         let plan2 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(2),
-                lit_text("bob"),
+                lit!(int: 2),
+                lit!(text: "bob"),
                 ResolvedExpr::Literal(Value::Bool(false)),
             ],
         };
@@ -802,8 +803,8 @@ mod tests {
         let insert_plan = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(true)),
             ],
         };
@@ -812,7 +813,7 @@ mod tests {
         // Try to update the PK column (should fail)
         let update_plan = PhysicalPlan::Update {
             table_id,
-            assignments: vec![(0, lit_int(2))], // Update id column
+            assignments: vec![(0, lit!(int: 2))], // Update id column
             predicate: Some(ResolvedExpr::Literal(Value::Bool(true))),
         };
         let result = execute_dml(update_plan, &mut ctx);
@@ -853,8 +854,8 @@ mod tests {
         let insert_plan = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(true)),
             ],
         };
@@ -863,7 +864,7 @@ mod tests {
         // Try to update one PK column (should fail)
         let update_plan = PhysicalPlan::Update {
             table_id,
-            assignments: vec![(1, lit_text("bob"))], // Update name column (part of PK)
+            assignments: vec![(1, lit!(text: "bob"))], // Update name column (part of PK)
             predicate: Some(ResolvedExpr::Literal(Value::Bool(true))),
         };
         let result = execute_dml(update_plan, &mut ctx);
@@ -904,8 +905,8 @@ mod tests {
         let insert_plan = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(true)),
             ],
         };
@@ -915,7 +916,7 @@ mod tests {
         let update_plan = PhysicalPlan::Update {
             table_id,
             assignments: vec![
-                (1, lit_text("bob")),
+                (1, lit!(text: "bob")),
                 (2, ResolvedExpr::Literal(Value::Bool(false))),
             ],
             predicate: Some(ResolvedExpr::Literal(Value::Bool(true))),
@@ -958,8 +959,8 @@ mod tests {
         let insert_plan1 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(true)),
             ],
         };
@@ -977,8 +978,8 @@ mod tests {
         let insert_plan2 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("bob"),
+                lit!(int: 1),
+                lit!(text: "bob"),
                 ResolvedExpr::Literal(Value::Bool(false)),
             ],
         };
@@ -1018,8 +1019,8 @@ mod tests {
         let insert_plan1 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(true)),
             ],
         };
@@ -1037,8 +1038,8 @@ mod tests {
         let insert_plan2 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(false)),
             ],
         };
@@ -1079,8 +1080,8 @@ mod tests {
             let plan = PhysicalPlan::Insert {
                 table_id,
                 values: vec![
-                    lit_int(*id),
-                    lit_text(name),
+                    lit!(int: *id),
+                    lit!(text: name),
                     ResolvedExpr::Literal(Value::Bool(true)),
                 ],
             };
@@ -1100,8 +1101,8 @@ mod tests {
             let plan = PhysicalPlan::Insert {
                 table_id,
                 values: vec![
-                    lit_int(*id),
-                    lit_text(name),
+                    lit!(int: *id),
+                    lit!(text: name),
                     ResolvedExpr::Literal(Value::Bool(false)),
                 ],
             };
@@ -1151,13 +1152,13 @@ mod tests {
             // Insert rows
             let insert1 = PhysicalPlan::Insert {
                 table_id,
-                values: vec![lit_int(1), lit_text("alice")],
+                values: vec![lit!(int: 1), lit!(text: "alice")],
             };
             execute_dml(insert1, &mut ctx).unwrap();
 
             let insert2 = PhysicalPlan::Insert {
                 table_id,
-                values: vec![lit_int(2), lit_text("bob")],
+                values: vec![lit!(int: 2), lit!(text: "bob")],
             };
             execute_dml(insert2, &mut ctx).unwrap();
 
@@ -1181,7 +1182,7 @@ mod tests {
             // Try to insert duplicate PK (should fail)
             let insert_duplicate = PhysicalPlan::Insert {
                 table_id,
-                values: vec![lit_int(1), lit_text("charlie")],
+                values: vec![lit!(int: 1), lit!(text: "charlie")],
             };
             let result = execute_dml(insert_duplicate, &mut ctx);
             assert!(result.is_err());
@@ -1190,7 +1191,7 @@ mod tests {
             // Insert new unique PK (should succeed)
             let insert_new = PhysicalPlan::Insert {
                 table_id,
-                values: vec![lit_int(3), lit_text("charlie")],
+                values: vec![lit!(int: 3), lit!(text: "charlie")],
             };
             assert!(execute_dml(insert_new, &mut ctx).is_ok());
         }
@@ -1226,7 +1227,7 @@ mod tests {
         // Insert rows (creates .pk_idx)
         let insert = PhysicalPlan::Insert {
             table_id,
-            values: vec![lit_int(1), lit_text("alice")],
+            values: vec![lit!(int: 1), lit!(text: "alice")],
         };
         execute_dml(insert, &mut ctx).unwrap();
 
@@ -1241,7 +1242,7 @@ mod tests {
         // Try to insert duplicate (should still fail - rebuilt from heap)
         let insert_dup = PhysicalPlan::Insert {
             table_id,
-            values: vec![lit_int(1), lit_text("bob")],
+            values: vec![lit!(int: 1), lit!(text: "bob")],
         };
         let result = execute_dml(insert_dup, &mut ctx);
         assert!(result.is_err());
@@ -1282,7 +1283,7 @@ mod tests {
             // Insert then delete
             let insert = PhysicalPlan::Insert {
                 table_id,
-                values: vec![lit_int(1), lit_text("alice")],
+                values: vec![lit!(int: 1), lit!(text: "alice")],
             };
             execute_dml(insert, &mut ctx).unwrap();
 
@@ -1308,7 +1309,7 @@ mod tests {
             // Reinsert the deleted key (should succeed)
             let insert = PhysicalPlan::Insert {
                 table_id,
-                values: vec![lit_int(1), lit_text("alice")],
+                values: vec![lit!(int: 1), lit!(text: "alice")],
             };
             assert!(execute_dml(insert, &mut ctx).is_ok());
         }

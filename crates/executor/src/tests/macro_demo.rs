@@ -12,15 +12,6 @@ mod tests {
     use testsupport::prelude::*;
     use types::{SqlType, Value};
 
-    // Helper functions for building expressions (these would typically be in tests/helpers.rs)
-    fn lit_int(value: i64) -> ResolvedExpr {
-        ResolvedExpr::Literal(Value::Int(value))
-    }
-
-    fn lit_text(value: &str) -> ResolvedExpr {
-        ResolvedExpr::Literal(Value::Text(value.to_string()))
-    }
-
     /// BEFORE: Traditional test setup (17 lines of boilerplate)
     #[test]
     fn test_primary_key_enforcement_old_style() {
@@ -51,8 +42,8 @@ mod tests {
         let plan1 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(true)),
             ],
         };
@@ -62,8 +53,8 @@ mod tests {
         let plan2 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("bob"),
+                lit!(int: 1),
+                lit!(text: "bob"),
                 ResolvedExpr::Literal(Value::Bool(false)),
             ],
         };
@@ -87,8 +78,8 @@ mod tests {
         let plan1 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("alice"),
+                lit!(int: 1),
+                lit!(text: "alice"),
                 ResolvedExpr::Literal(Value::Bool(true)),
             ],
         };
@@ -98,8 +89,8 @@ mod tests {
         let plan2 = PhysicalPlan::Insert {
             table_id,
             values: vec![
-                lit_int(1),
-                lit_text("bob"),
+                lit!(int: 1),
+                lit!(text: "bob"),
                 ResolvedExpr::Literal(Value::Bool(false)),
             ],
         };

@@ -173,8 +173,9 @@ fn eval_binary_op(left: Value, op: expr::BinaryOp, right: Value) -> DbResult<Val
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::helpers::*;
+    use crate::tests::helpers::{assert_exhausted, assert_next_row, create_test_catalog, MockExecutor};
     use expr::{BinaryOp, UnaryOp};
+    use testsupport::prelude::*;
 
     // ===== FilterExec Tests =====
 
@@ -184,7 +185,7 @@ mod tests {
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "value".into()]));
 
         // WHERE value > 15
-        let predicate = binary(col(1), BinaryOp::Gt, lit_int(15));
+        let predicate = binary(col(1), BinaryOp::Gt, lit!(int: 15));
         let mut filter = FilterExec::new(input, predicate);
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -209,7 +210,7 @@ mod tests {
         let input = Box::new(MockExecutor::new(rows, vec!["id".into(), "value".into()]));
 
         // WHERE value > 100 (no matches)
-        let predicate = binary(col(1), BinaryOp::Gt, lit_int(100));
+        let predicate = binary(col(1), BinaryOp::Gt, lit!(int: 100));
         let mut filter = FilterExec::new(input, predicate);
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -226,7 +227,7 @@ mod tests {
     #[test]
     fn filter_empty_input_returns_none() {
         let input = Box::new(MockExecutor::new(vec![], vec![]));
-        let predicate = lit_bool(true);
+        let predicate = lit!(bool: true);
         let mut filter = FilterExec::new(input, predicate);
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -244,7 +245,7 @@ mod tests {
     fn filter_null_predicate_treated_as_false() {
         let rows = vec![int_row(&[1]), int_row(&[2])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
-        let predicate = lit_null(); // Always NULL
+        let predicate = lit!(Value::Null); // Always NULL
         let mut filter = FilterExec::new(input, predicate);
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -262,7 +263,7 @@ mod tests {
     fn filter_non_boolean_predicate_returns_error() {
         let rows = vec![int_row(&[1])];
         let input = Box::new(MockExecutor::new(rows, vec!["id".into()]));
-        let predicate = lit_int(42); // Not a boolean
+        let predicate = lit!(int: 42); // Not a boolean
         let mut filter = FilterExec::new(input, predicate);
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -280,14 +281,14 @@ mod tests {
     #[test]
     fn eval_literal_int() {
         let row = Row::new(vec![]);
-        let expr = lit_int(42);
+        let expr = lit!(int: 42);
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Int(42));
     }
 
     #[test]
     fn eval_literal_text() {
         let row = Row::new(vec![]);
-        let expr = lit_text("hello");
+        let expr = lit!(text: "hello");
         assert_eq!(
             eval_resolved_expr(&expr, &row).unwrap(),
             Value::Text("hello".into())
@@ -297,14 +298,14 @@ mod tests {
     #[test]
     fn eval_literal_bool() {
         let row = Row::new(vec![]);
-        let expr = lit_bool(true);
+        let expr = lit!(bool: true);
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
     }
 
     #[test]
     fn eval_literal_null() {
         let row = Row::new(vec![]);
-        let expr = lit_null();
+        let expr = lit!(Value::Null);
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Null);
     }
 
@@ -347,35 +348,35 @@ mod tests {
     #[test]
     fn eval_not_true_returns_false() {
         let row = Row::new(vec![]);
-        let expr = unary(UnaryOp::Not, lit_bool(true));
+        let expr = unary(UnaryOp::Not, lit!(bool: true));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
     #[test]
     fn eval_not_false_returns_true() {
         let row = Row::new(vec![]);
-        let expr = unary(UnaryOp::Not, lit_bool(false));
+        let expr = unary(UnaryOp::Not, lit!(bool: false));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
     }
 
     #[test]
     fn eval_not_null_returns_null() {
         let row = Row::new(vec![]);
-        let expr = unary(UnaryOp::Not, lit_null());
+        let expr = unary(UnaryOp::Not, lit!(Value::Null));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Null);
     }
 
     #[test]
     fn eval_not_int_returns_error() {
         let row = Row::new(vec![]);
-        let expr = unary(UnaryOp::Not, lit_int(42));
+        let expr = unary(UnaryOp::Not, lit!(int: 42));
         assert_error_contains(eval_resolved_expr(&expr, &row), "NOT requires boolean");
     }
 
     #[test]
     fn eval_not_text_returns_error() {
         let row = Row::new(vec![]);
-        let expr = unary(UnaryOp::Not, lit_text("foo"));
+        let expr = unary(UnaryOp::Not, lit!(text: "foo"));
         assert_error_contains(eval_resolved_expr(&expr, &row), "NOT requires boolean");
     }
 
@@ -384,60 +385,60 @@ mod tests {
     #[test]
     fn eval_int_eq() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_int(42), BinaryOp::Eq, lit_int(42));
+        let expr = binary(lit!(int: 42), BinaryOp::Eq, lit!(int: 42));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
 
-        let expr = binary(lit_int(42), BinaryOp::Eq, lit_int(43));
+        let expr = binary(lit!(int: 42), BinaryOp::Eq, lit!(int: 43));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
     #[test]
     fn eval_int_ne() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_int(42), BinaryOp::Ne, lit_int(43));
+        let expr = binary(lit!(int: 42), BinaryOp::Ne, lit!(int: 43));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
 
-        let expr = binary(lit_int(42), BinaryOp::Ne, lit_int(42));
+        let expr = binary(lit!(int: 42), BinaryOp::Ne, lit!(int: 42));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
     #[test]
     fn eval_int_lt() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_int(10), BinaryOp::Lt, lit_int(20));
+        let expr = binary(lit!(int: 10), BinaryOp::Lt, lit!(int: 20));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
 
-        let expr = binary(lit_int(20), BinaryOp::Lt, lit_int(10));
+        let expr = binary(lit!(int: 20), BinaryOp::Lt, lit!(int: 10));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
     #[test]
     fn eval_int_le() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_int(10), BinaryOp::Le, lit_int(10));
+        let expr = binary(lit!(int: 10), BinaryOp::Le, lit!(int: 10));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
 
-        let expr = binary(lit_int(20), BinaryOp::Le, lit_int(10));
+        let expr = binary(lit!(int: 20), BinaryOp::Le, lit!(int: 10));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
     #[test]
     fn eval_int_gt() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_int(20), BinaryOp::Gt, lit_int(10));
+        let expr = binary(lit!(int: 20), BinaryOp::Gt, lit!(int: 10));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
 
-        let expr = binary(lit_int(10), BinaryOp::Gt, lit_int(20));
+        let expr = binary(lit!(int: 10), BinaryOp::Gt, lit!(int: 20));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
     #[test]
     fn eval_int_ge() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_int(10), BinaryOp::Ge, lit_int(10));
+        let expr = binary(lit!(int: 10), BinaryOp::Ge, lit!(int: 10));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
 
-        let expr = binary(lit_int(10), BinaryOp::Ge, lit_int(20));
+        let expr = binary(lit!(int: 10), BinaryOp::Ge, lit!(int: 20));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
@@ -446,20 +447,20 @@ mod tests {
     #[test]
     fn eval_text_eq() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_text("hello"), BinaryOp::Eq, lit_text("hello"));
+        let expr = binary(lit!(text: "hello"), BinaryOp::Eq, lit!(text: "hello"));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
 
-        let expr = binary(lit_text("hello"), BinaryOp::Eq, lit_text("world"));
+        let expr = binary(lit!(text: "hello"), BinaryOp::Eq, lit!(text: "world"));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
     #[test]
     fn eval_text_ne() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_text("hello"), BinaryOp::Ne, lit_text("world"));
+        let expr = binary(lit!(text: "hello"), BinaryOp::Ne, lit!(text: "world"));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
 
-        let expr = binary(lit_text("hello"), BinaryOp::Ne, lit_text("hello"));
+        let expr = binary(lit!(text: "hello"), BinaryOp::Ne, lit!(text: "hello"));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
@@ -468,20 +469,20 @@ mod tests {
     #[test]
     fn eval_bool_eq() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_bool(true), BinaryOp::Eq, lit_bool(true));
+        let expr = binary(lit!(bool: true), BinaryOp::Eq, lit!(bool: true));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
 
-        let expr = binary(lit_bool(true), BinaryOp::Eq, lit_bool(false));
+        let expr = binary(lit!(bool: true), BinaryOp::Eq, lit!(bool: false));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
     #[test]
     fn eval_bool_ne() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_bool(true), BinaryOp::Ne, lit_bool(false));
+        let expr = binary(lit!(bool: true), BinaryOp::Ne, lit!(bool: false));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
 
-        let expr = binary(lit_bool(true), BinaryOp::Ne, lit_bool(true));
+        let expr = binary(lit!(bool: true), BinaryOp::Ne, lit!(bool: true));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
@@ -490,42 +491,42 @@ mod tests {
     #[test]
     fn eval_and_true_true() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_bool(true), BinaryOp::And, lit_bool(true));
+        let expr = binary(lit!(bool: true), BinaryOp::And, lit!(bool: true));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
     }
 
     #[test]
     fn eval_and_true_false() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_bool(true), BinaryOp::And, lit_bool(false));
+        let expr = binary(lit!(bool: true), BinaryOp::And, lit!(bool: false));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
     #[test]
     fn eval_and_false_false() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_bool(false), BinaryOp::And, lit_bool(false));
+        let expr = binary(lit!(bool: false), BinaryOp::And, lit!(bool: false));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
     #[test]
     fn eval_or_true_true() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_bool(true), BinaryOp::Or, lit_bool(true));
+        let expr = binary(lit!(bool: true), BinaryOp::Or, lit!(bool: true));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
     }
 
     #[test]
     fn eval_or_true_false() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_bool(true), BinaryOp::Or, lit_bool(false));
+        let expr = binary(lit!(bool: true), BinaryOp::Or, lit!(bool: false));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
     }
 
     #[test]
     fn eval_or_false_false() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_bool(false), BinaryOp::Or, lit_bool(false));
+        let expr = binary(lit!(bool: false), BinaryOp::Or, lit!(bool: false));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(false));
     }
 
@@ -534,28 +535,28 @@ mod tests {
     #[test]
     fn eval_null_eq_int_returns_null() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_null(), BinaryOp::Eq, lit_int(42));
+        let expr = binary(lit!(Value::Null), BinaryOp::Eq, lit!(int: 42));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Null);
     }
 
     #[test]
     fn eval_int_eq_null_returns_null() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_int(42), BinaryOp::Eq, lit_null());
+        let expr = binary(lit!(int: 42), BinaryOp::Eq, lit!(Value::Null));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Null);
     }
 
     #[test]
     fn eval_null_eq_null_returns_null() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_null(), BinaryOp::Eq, lit_null());
+        let expr = binary(lit!(Value::Null), BinaryOp::Eq, lit!(Value::Null));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Null);
     }
 
     #[test]
     fn eval_null_and_bool_returns_null() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_null(), BinaryOp::And, lit_bool(true));
+        let expr = binary(lit!(Value::Null), BinaryOp::And, lit!(bool: true));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Null);
     }
 
@@ -564,21 +565,21 @@ mod tests {
     #[test]
     fn eval_int_eq_text_returns_error() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_int(42), BinaryOp::Eq, lit_text("42"));
+        let expr = binary(lit!(int: 42), BinaryOp::Eq, lit!(text: "42"));
         assert_error_contains(eval_resolved_expr(&expr, &row), "invalid binary operation");
     }
 
     #[test]
     fn eval_int_lt_bool_returns_error() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_int(42), BinaryOp::Lt, lit_bool(true));
+        let expr = binary(lit!(int: 42), BinaryOp::Lt, lit!(bool: true));
         assert_error_contains(eval_resolved_expr(&expr, &row), "invalid binary operation");
     }
 
     #[test]
     fn eval_and_with_int_returns_error() {
         let row = Row::new(vec![]);
-        let expr = binary(lit_int(1), BinaryOp::And, lit_bool(true));
+        let expr = binary(lit!(int: 1), BinaryOp::And, lit!(bool: true));
         assert_error_contains(eval_resolved_expr(&expr, &row), "invalid binary operation");
     }
 
@@ -588,8 +589,8 @@ mod tests {
     fn eval_nested_and_or() {
         let row = Row::new(vec![]);
         // (true OR false) AND true
-        let left = binary(lit_bool(true), BinaryOp::Or, lit_bool(false));
-        let expr = binary(left, BinaryOp::And, lit_bool(true));
+        let left = binary(lit!(bool: true), BinaryOp::Or, lit!(bool: false));
+        let expr = binary(left, BinaryOp::And, lit!(bool: true));
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
     }
 
@@ -597,7 +598,7 @@ mod tests {
     fn eval_nested_not() {
         let row = Row::new(vec![]);
         // NOT (NOT true)
-        let inner = unary(UnaryOp::Not, lit_bool(true));
+        let inner = unary(UnaryOp::Not, lit!(bool: true));
         let expr = unary(UnaryOp::Not, inner);
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
     }
@@ -606,8 +607,8 @@ mod tests {
     fn eval_comparison_in_logical() {
         let row = int_row(&[10, 20]);
         // (col0 < 15) AND (col1 > 15)
-        let left = binary(col(0), BinaryOp::Lt, lit_int(15));
-        let right = binary(col(1), BinaryOp::Gt, lit_int(15));
+        let left = binary(col(0), BinaryOp::Lt, lit!(int: 15));
+        let right = binary(col(1), BinaryOp::Gt, lit!(int: 15));
         let expr = binary(left, BinaryOp::And, right);
         assert_eq!(eval_resolved_expr(&expr, &row).unwrap(), Value::Bool(true));
     }
