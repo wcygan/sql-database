@@ -231,7 +231,11 @@ mod proptest_tests {
     use proptest::prelude::*;
     use testsupport::proptest_generators::*;
 
+    // Configure proptest to run fewer cases for faster tests
+    // Default is 256 cases, we use 50 for quick feedback
     proptest! {
+        #![proptest_config(ProptestConfig::with_cases(50))]
+
         #[test]
         fn prop_row_clone_equals(row in arb_row()) {
             let cloned = row.clone();

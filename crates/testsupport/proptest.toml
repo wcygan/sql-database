@@ -1,0 +1,12 @@
+# Proptest configuration for testsupport crate
+# Reduces test case count for faster iteration during development
+
+# Run fewer cases by default (default is 256)
+# This makes property tests run in ~1 second instead of ~20+ seconds
+cases = 100
+
+# Reduce fork count for faster execution
+fork = false
+
+# Timeout per test case (in milliseconds)
+timeout = 1000

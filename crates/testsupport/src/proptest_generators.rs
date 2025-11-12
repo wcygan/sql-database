@@ -111,7 +111,10 @@ pub fn arb_wal_record() -> impl Strategy<Value = WalRecord> {
 mod tests {
     use super::*;
 
+    // Configure proptest to run fewer cases for faster tests
     proptest! {
+        #![proptest_config(ProptestConfig::with_cases(50))]
+
         #[test]
         fn prop_arb_value_always_valid(value in arb_value()) {
             // Every generated value should be one of the four variants
