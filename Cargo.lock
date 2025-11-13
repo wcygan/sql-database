@@ -321,6 +321,7 @@ dependencies = [
  "protocol",
  "server",
  "tempfile",
+ "testsupport",
  "thiserror 1.0.69",
  "tokio",
  "types",

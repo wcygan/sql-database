@@ -16,3 +16,20 @@ tempfile = { workspace = true }
 database = { workspace = true }
 server = { workspace = true }
 tokio = { workspace = true }
+testsupport = { workspace = true }
+
+[[example]]
+name = "simple_client"
+path = "examples/simple_client.rs"
+
+[[example]]
+name = "concurrent_clients"
+path = "examples/concurrent_clients.rs"
+
+[[example]]
+name = "batch_insert"
+path = "examples/batch_insert.rs"
+
+[[example]]
+name = "error_handling"
+path = "examples/error_handling.rs"
