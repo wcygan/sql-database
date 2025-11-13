@@ -14,7 +14,6 @@ thiserror = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 database = { workspace = true }
-server = { workspace = true }
 tokio = { workspace = true }
 testsupport = { workspace = true }
 

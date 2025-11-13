@@ -133,18 +133,6 @@ pub fn create_test_catalog() -> Catalog {
     catalog
 }
 
-// Row builders
-
-/// Create a row with integer values.
-pub fn int_row(values: &[i64]) -> Row {
-    Row::new(values.iter().map(|&v| Value::Int(v)).collect())
-}
-
-/// Create a row with text values.
-pub fn text_row(values: &[&str]) -> Row {
-    Row::new(values.iter().map(|&v| Value::Text(v.to_string())).collect())
-}
-
 /// Create a row with boolean values.
 #[allow(dead_code)]
 pub fn bool_row(values: &[bool]) -> Row {

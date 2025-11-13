@@ -319,7 +319,6 @@ dependencies = [
  "common",
  "database",
  "protocol",
- "server",
  "tempfile",
  "testsupport",
  "thiserror 1.0.69",
@@ -511,6 +510,7 @@ dependencies = [
  "catalog",
  "common",
  "executor",
+ "num-integer",
  "parser",
  "planner",
  "tempfile",
@@ -936,6 +936,15 @@ dependencies = [
  "bitflags",
  "cfg-if",
  "libc",
+]
+
+[[package]]
+name = "num-integer"
+version = "0.1.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]

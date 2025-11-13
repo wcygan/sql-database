@@ -6,6 +6,7 @@ use parser::{parse_sql, Statement};
 use planner::{PhysicalPlan, Planner, PlanningContext};
 use std::{
     fs,
+    ops::DerefMut,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -311,7 +312,7 @@ impl Database {
 
         tokio::task::spawn_blocking(move || {
             let catalog_lock = catalog.blocking_read();
-            let mut planning_ctx = PlanningContext::new(&*catalog_lock);
+            let mut planning_ctx = PlanningContext::new(&catalog_lock);
             let plan = Planner::plan(query, &mut planning_ctx).map_err(anyhow::Error::from)?;
 
             if analyze {
@@ -321,10 +322,10 @@ impl Database {
                 let mut pager_lock = pager.blocking_lock();
                 let mut wal_lock = wal.blocking_lock();
                 let mut ctx = ExecutionContext::new(
-                    &*catalog_lock,
-                    &mut *pager_lock,
-                    &mut *wal_lock,
-                    (*data_dir).clone(),
+                    &catalog_lock,
+                    pager_lock.deref_mut(),
+                    wal_lock.deref_mut(),
+                    data_dir.as_ref().clone(),
                 );
 
                 let mut executor = build_executor(plan).map_err(anyhow::Error::from)?;
@@ -377,17 +378,17 @@ impl Database {
         tokio::task::spawn_blocking(move || {
             // Acquire read lock on catalog (shared access for queries/DML)
             let catalog_lock = catalog.blocking_read();
-            let mut planning_ctx = PlanningContext::new(&*catalog_lock);
+            let mut planning_ctx = PlanningContext::new(&catalog_lock);
             let plan = Planner::plan(stmt, &mut planning_ctx).map_err(anyhow::Error::from)?;
 
             // Acquire exclusive locks on pager and WAL
             let mut pager_lock = pager.blocking_lock();
             let mut wal_lock = wal.blocking_lock();
             let mut ctx = ExecutionContext::new(
-                &*catalog_lock,
-                &mut *pager_lock,
-                &mut *wal_lock,
-                (*data_dir).clone(),
+                &catalog_lock,
+                pager_lock.deref_mut(),
+                wal_lock.deref_mut(),
+                data_dir.as_ref().clone(),
             );
 
             match plan {
@@ -453,7 +454,7 @@ impl Database {
             // Reinitialize catalog
             {
                 let mut catalog_lock = catalog.blocking_write();
-                *catalog_lock = Catalog::load(&**catalog_path).map_err(anyhow::Error::from)?;
+                *catalog_lock = Catalog::load(&catalog_path).map_err(anyhow::Error::from)?;
             }
 
             // Reinitialize pager (clear buffer pool)

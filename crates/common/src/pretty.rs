@@ -3,17 +3,12 @@ use tabled::{Table, Tabled, builder::Builder, settings};
 use types::Value;
 
 /// Predefined output styles that map to `tabled` styles.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum TableStyleKind {
+    #[default]
     Modern,
     Ascii,
     Plain,
-}
-
-impl Default for TableStyleKind {
-    fn default() -> Self {
-        Self::Modern
-    }
 }
 
 impl TableStyleKind {

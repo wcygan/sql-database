@@ -202,9 +202,9 @@ impl Executor for UpdateExec {
         }
 
         self.executed = false;
-        let result = self.input.open(ctx)?;
+        self.input.open(ctx)?;
         self.stats.open_time = start.elapsed();
-        Ok(result)
+        Ok(())
     }
 
     fn next(&mut self, ctx: &mut ExecutionContext) -> DbResult<Option<Row>> {
@@ -257,9 +257,9 @@ impl Executor for UpdateExec {
 
     fn close(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
         let start = Instant::now();
-        let result = self.input.close(ctx)?;
+        self.input.close(ctx)?;
         self.stats.close_time = start.elapsed();
-        Ok(result)
+        Ok(())
     }
 
     fn schema(&self) -> &[String] {
@@ -302,9 +302,9 @@ impl Executor for DeleteExec {
         let start = Instant::now();
         self.stats = ExecutionStats::default();
         self.executed = false;
-        let result = self.input.open(ctx)?;
+        self.input.open(ctx)?;
         self.stats.open_time = start.elapsed();
-        Ok(result)
+        Ok(())
     }
 
     fn next(&mut self, ctx: &mut ExecutionContext) -> DbResult<Option<Row>> {
@@ -355,9 +355,9 @@ impl Executor for DeleteExec {
 
     fn close(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
         let start = Instant::now();
-        let result = self.input.close(ctx)?;
+        self.input.close(ctx)?;
         self.stats.close_time = start.elapsed();
-        Ok(result)
+        Ok(())
     }
 
     fn schema(&self) -> &[String] {

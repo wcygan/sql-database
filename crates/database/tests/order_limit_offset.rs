@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use database::{Database, QueryResult};
+use num_integer::Integer;
 use types::Value;
 
 #[tokio::test]
@@ -170,9 +171,9 @@ async fn pagination_through_ordered_records() -> Result<()> {
     }
 
     // Page through the results with page size 2
-    let page_size = 2;
-    let total_records = 10;
-    let total_pages = (total_records + page_size - 1) / page_size; // 5 pages
+    let page_size: usize = 2;
+    let total_records: usize = 10;
+    let total_pages = Integer::div_ceil(&total_records, &page_size); // 5 pages
 
     let mut all_ids = Vec::new();
 

@@ -64,9 +64,9 @@ impl Executor for SortExec {
         self.stats = ExecutionStats::default();
         self.sorted_rows = None;
         self.current_index = 0;
-        let result = self.input.open(ctx)?;
+        self.input.open(ctx)?;
         self.stats.open_time = start.elapsed();
-        Ok(result)
+        Ok(())
     }
 
     fn next(&mut self, ctx: &mut ExecutionContext) -> DbResult<Option<Row>> {
@@ -99,9 +99,9 @@ impl Executor for SortExec {
     fn close(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
         let start = Instant::now();
         self.sorted_rows = None;
-        let result = self.input.close(ctx)?;
+        self.input.close(ctx)?;
         self.stats.close_time = start.elapsed();
-        Ok(result)
+        Ok(())
     }
 
     fn schema(&self) -> &[String] {
