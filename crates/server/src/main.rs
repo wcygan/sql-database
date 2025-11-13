@@ -108,87 +108,99 @@ async fn run_server(listener: TcpListener, db: Arc<Database>) -> Result<()> {
     }
 }
 
+/// Read a single request from the client.
+/// Returns Ok(None) if client disconnected gracefully.
+async fn read_client_request(
+    socket: &mut TcpStream,
+) -> Result<Option<ClientRequest>> {
+    match frame::read_message_async(socket).await {
+        Ok(request) => Ok(Some(request)),
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            // Client disconnected gracefully
+            Ok(None)
+        }
+        Err(e) => {
+            // Send error response before closing
+            let response = ServerResponse::Error {
+                code: protocol::ErrorCode::IoError,
+                message: format!("Failed to read request: {}", e),
+            };
+            let _ = frame::write_message_async(socket, &response).await;
+            Err(e.into())
+        }
+    }
+}
+
+/// Execute SQL and convert the result to a server response.
+/// Handles logging and timing internally.
+async fn execute_sql_request(
+    db: &Database,
+    sql: &str,
+    client_addr: &str,
+) -> ServerResponse {
+    log_request(client_addr, sql);
+    let start = std::time::Instant::now();
+
+    let result = db.execute(sql).await;
+
+    match result {
+        Ok(QueryResult::Rows { schema, rows }) => {
+            let row_count = rows.len();
+            log_response(
+                client_addr,
+                start.elapsed(),
+                &format!("{} rows", row_count),
+            );
+            ServerResponse::Rows { schema, rows }
+        }
+        Ok(QueryResult::Count { affected }) => {
+            log_response(
+                client_addr,
+                start.elapsed(),
+                &format!("{} affected", affected),
+            );
+            ServerResponse::Count { affected }
+        }
+        Ok(QueryResult::Empty) => {
+            log_response(client_addr, start.elapsed(), "DDL success");
+            ServerResponse::Empty
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            log_response(
+                client_addr,
+                start.elapsed(),
+                &format!("Error: {}", msg),
+            );
+            ServerResponse::Error {
+                code: error::map_error_to_code(&e),
+                message: msg,
+            }
+        }
+    }
+}
+
 /// Handle a single client connection.
 async fn handle_client(mut socket: TcpStream, db: Arc<Database>) -> Result<()> {
-    // Get client address for logging
     let client_addr = socket
         .peer_addr()
         .map(|addr| addr.to_string())
         .unwrap_or_else(|_| "unknown".to_string());
 
     loop {
-        // Read request from client
-        let request: ClientRequest = match frame::read_message_async(&mut socket).await {
-            Ok(req) => req,
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                // Client disconnected
-                break;
-            }
-            Err(e) => {
-                // Send error response and close connection
-                let response = ServerResponse::Error {
-                    code: protocol::ErrorCode::IoError,
-                    message: format!("Failed to read request: {}", e),
-                };
-                let _ = frame::write_message_async(&mut socket, &response).await;
-                return Err(e.into());
-            }
+        // Read next request
+        let Some(request) = read_client_request(&mut socket).await? else {
+            // Client disconnected
+            break;
         };
 
         // Handle request
         match request {
             ClientRequest::Execute { sql } => {
-                // Log incoming request
-                log_request(&client_addr, &sql);
-
-                // Start timing
-                let start = std::time::Instant::now();
-
-                // Execute SQL
-                let result = db.execute(&sql).await;
-
-                // Convert result to response
-                let response = match result {
-                    Ok(QueryResult::Rows { schema, rows }) => {
-                        let row_count = rows.len();
-                        let resp = ServerResponse::Rows { schema, rows };
-                        log_response(
-                            &client_addr,
-                            start.elapsed(),
-                            &format!("{} rows", row_count),
-                        );
-                        resp
-                    }
-                    Ok(QueryResult::Count { affected }) => {
-                        let resp = ServerResponse::Count { affected };
-                        log_response(
-                            &client_addr,
-                            start.elapsed(),
-                            &format!("{} affected", affected),
-                        );
-                        resp
-                    }
-                    Ok(QueryResult::Empty) => {
-                        log_response(&client_addr, start.elapsed(), "DDL success");
-                        ServerResponse::Empty
-                    }
-                    Err(e) => {
-                        let msg = e.to_string();
-                        log_response(&client_addr, start.elapsed(), &format!("Error: {}", msg));
-                        ServerResponse::Error {
-                            code: error::map_error_to_code(&e),
-                            message: msg,
-                        }
-                    }
-                };
-
-                // Send response
+                let response = execute_sql_request(&db, &sql, &client_addr).await;
                 frame::write_message_async(&mut socket, &response).await?;
             }
-            ClientRequest::Close => {
-                // Client requested graceful close
-                break;
-            }
+            ClientRequest::Close => break,
         }
     }
 
