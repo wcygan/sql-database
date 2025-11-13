@@ -58,6 +58,52 @@ async fn execute_and_print(client: &mut Client, sql: &str) -> Result<()> {
     Ok(())
 }
 
+/// Process a line of input from the REPL.
+/// Returns true to continue the loop, false to exit.
+async fn process_line(client: &mut Client, line: &str) -> bool {
+    // Skip empty lines
+    if line.is_empty() {
+        return true;
+    }
+
+    // Handle meta-commands
+    if line == ".quit" || line == ".exit" {
+        return false;
+    }
+
+    if line == ".help" {
+        print_help();
+        return true;
+    }
+
+    // Execute SQL
+    match client.execute(line).await {
+        Ok(result) => print_result(&result),
+        Err(e) => eprintln!("Error: {}", e),
+    }
+
+    true
+}
+
+/// Handle readline errors.
+/// Returns true to continue the loop, false to exit.
+fn handle_readline_error(error: ReadlineError) -> bool {
+    match error {
+        ReadlineError::Interrupted => {
+            println!("^C");
+            false
+        }
+        ReadlineError::Eof => {
+            println!("^D");
+            false
+        }
+        err => {
+            eprintln!("Error: {:?}", err);
+            false
+        }
+    }
+}
+
 /// Run an interactive REPL loop.
 async fn interactive_loop(client: &mut Client) -> Result<()> {
     let mut rl = DefaultEditor::new()?;
@@ -67,52 +113,19 @@ async fn interactive_loop(client: &mut Client) -> Result<()> {
     println!();
 
     loop {
-        // Read line
         let readline = rl.readline("> ");
 
-        match readline {
+        let should_continue = match readline {
             Ok(line) => {
                 let line = line.trim();
-
-                if line.is_empty() {
-                    continue;
-                }
-
-                // Add to history
                 let _ = rl.add_history_entry(line);
+                process_line(client, line).await
+            }
+            Err(e) => handle_readline_error(e),
+        };
 
-                // Check for meta commands
-                if line == ".quit" || line == ".exit" {
-                    break;
-                }
-
-                if line == ".help" {
-                    print_help();
-                    continue;
-                }
-
-                // Execute SQL
-                match client.execute(line).await {
-                    Ok(result) => {
-                        print_result(&result);
-                    }
-                    Err(e) => {
-                        eprintln!("Error: {}", e);
-                    }
-                }
-            }
-            Err(ReadlineError::Interrupted) => {
-                println!("^C");
-                break;
-            }
-            Err(ReadlineError::Eof) => {
-                println!("^D");
-                break;
-            }
-            Err(err) => {
-                eprintln!("Error: {:?}", err);
-                break;
-            }
+        if !should_continue {
+            break;
         }
     }
 
