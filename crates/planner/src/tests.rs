@@ -833,3 +833,153 @@ fn projection_with_specific_columns_not_pruned() {
         _ => panic!("expected Project"),
     }
 }
+
+#[test]
+fn order_by_generates_sort_node() {
+    let catalog = sample_catalog();
+    let mut ctx = PlanningContext::new(&catalog);
+    let stmt = parse_sql("SELECT * FROM users ORDER BY age DESC")
+        .unwrap()
+        .remove(0);
+
+    let plan = Planner::plan(stmt, &mut ctx).unwrap();
+
+    // Should have Sort -> Project -> SeqScan
+    match plan {
+        PhysicalPlan::Sort { input, order_by } => {
+            assert_eq!(order_by.len(), 1);
+            assert_eq!(order_by[0].column_id, 2); // age is column 2 (id=0, name=1, age=2)
+            assert_eq!(order_by[0].direction, SortDirection::Desc);
+            assert!(matches!(*input, PhysicalPlan::Project { .. }));
+        }
+        _ => panic!("expected Sort, got {:?}", plan),
+    }
+}
+
+#[test]
+fn limit_generates_limit_node() {
+    let catalog = sample_catalog();
+    let mut ctx = PlanningContext::new(&catalog);
+    let stmt = parse_sql("SELECT * FROM users LIMIT 10").unwrap().remove(0);
+
+    let plan = Planner::plan(stmt, &mut ctx).unwrap();
+
+    // Should have Limit -> Project -> SeqScan
+    match plan {
+        PhysicalPlan::Limit {
+            input,
+            limit,
+            offset,
+        } => {
+            assert_eq!(limit, Some(10));
+            assert_eq!(offset, None);
+            assert!(matches!(*input, PhysicalPlan::Project { .. }));
+        }
+        _ => panic!("expected Limit, got {:?}", plan),
+    }
+}
+
+#[test]
+fn limit_with_offset_generates_limit_node() {
+    let catalog = sample_catalog();
+    let mut ctx = PlanningContext::new(&catalog);
+    let stmt = parse_sql("SELECT * FROM users LIMIT 10 OFFSET 20")
+        .unwrap()
+        .remove(0);
+
+    let plan = Planner::plan(stmt, &mut ctx).unwrap();
+
+    match plan {
+        PhysicalPlan::Limit {
+            limit,
+            offset,
+            input,
+        } => {
+            assert_eq!(limit, Some(10));
+            assert_eq!(offset, Some(20));
+            assert!(matches!(*input, PhysicalPlan::Project { .. }));
+        }
+        _ => panic!("expected Limit, got {:?}", plan),
+    }
+}
+
+#[test]
+fn order_by_with_limit_generates_both_nodes() {
+    let catalog = sample_catalog();
+    let mut ctx = PlanningContext::new(&catalog);
+    let stmt = parse_sql("SELECT * FROM users ORDER BY name ASC LIMIT 5")
+        .unwrap()
+        .remove(0);
+
+    let plan = Planner::plan(stmt, &mut ctx).unwrap();
+
+    // Should have Limit -> Sort -> Project -> SeqScan
+    match plan {
+        PhysicalPlan::Limit { input, limit, .. } => {
+            assert_eq!(limit, Some(5));
+            match *input {
+                PhysicalPlan::Sort { order_by, .. } => {
+                    assert_eq!(order_by.len(), 1);
+                    assert_eq!(order_by[0].column_id, 1); // name is column 1
+                    assert_eq!(order_by[0].direction, SortDirection::Asc);
+                }
+                _ => panic!("expected Sort under Limit"),
+            }
+        }
+        _ => panic!("expected Limit, got {:?}", plan),
+    }
+}
+
+#[test]
+fn multiple_order_by_columns_resolved_correctly() {
+    let catalog = sample_catalog();
+    let mut ctx = PlanningContext::new(&catalog);
+    let stmt = parse_sql("SELECT * FROM users ORDER BY age DESC, name ASC")
+        .unwrap()
+        .remove(0);
+
+    let plan = Planner::plan(stmt, &mut ctx).unwrap();
+
+    match plan {
+        PhysicalPlan::Sort { order_by, .. } => {
+            assert_eq!(order_by.len(), 2);
+            assert_eq!(order_by[0].column_id, 2); // age
+            assert_eq!(order_by[0].direction, SortDirection::Desc);
+            assert_eq!(order_by[1].column_id, 1); // name
+            assert_eq!(order_by[1].direction, SortDirection::Asc);
+        }
+        _ => panic!("expected Sort, got {:?}", plan),
+    }
+}
+
+#[test]
+fn unknown_column_in_order_by_returns_error() {
+    let catalog = sample_catalog();
+    let mut ctx = PlanningContext::new(&catalog);
+    let stmt = parse_sql("SELECT * FROM users ORDER BY nonexistent")
+        .unwrap()
+        .remove(0);
+
+    let result = Planner::plan(stmt, &mut ctx);
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("unknown column 'nonexistent'"));
+}
+
+#[test]
+fn order_by_explain_formats_correctly() {
+    let catalog = sample_catalog();
+    let mut ctx = PlanningContext::new(&catalog);
+    let stmt = parse_sql("SELECT * FROM users ORDER BY age DESC LIMIT 10")
+        .unwrap()
+        .remove(0);
+
+    let plan = Planner::plan(stmt, &mut ctx).unwrap();
+    let text = explain_physical(&plan);
+
+    assert!(text.contains("Limit"));
+    assert!(text.contains("limit=Some(10)"));
+    assert!(text.contains("Sort"));
+}

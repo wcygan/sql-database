@@ -175,11 +175,84 @@ fn map_select(query: sqlast::Query) -> DbResult<Statement> {
         .collect::<DbResult<Vec<_>>>()?;
     let selection = selection.map(map_expr).transpose()?;
 
+    // Extract ORDER BY clauses
+    let order_by = query
+        .order_by
+        .into_iter()
+        .map(map_order_by_expr)
+        .collect::<DbResult<Vec<_>>>()?;
+
+    // Extract LIMIT
+    let limit = query
+        .limit
+        .map(|expr| {
+            match expr {
+                sqlast::Expr::Value(sqlast::Value::Number(n, _)) => {
+                    n.parse::<u64>()
+                        .map_err(|_| DbError::Parser(format!("invalid LIMIT value: {}", n)))
+                }
+                _ => Err(DbError::Parser("LIMIT must be a non-negative integer".into())),
+            }
+        })
+        .transpose()?;
+
+    // Extract OFFSET
+    let offset = query
+        .offset
+        .map(|offset_expr| {
+            match offset_expr.value {
+                sqlast::Expr::Value(sqlast::Value::Number(n, _)) => {
+                    n.parse::<u64>()
+                        .map_err(|_| DbError::Parser(format!("invalid OFFSET value: {}", n)))
+                }
+                _ => Err(DbError::Parser("OFFSET must be a non-negative integer".into())),
+            }
+        })
+        .transpose()?;
+
     Ok(Statement::Select {
         columns,
         table,
         selection,
+        order_by,
+        limit,
+        offset,
     })
+}
+
+fn map_order_by_expr(expr: sqlast::OrderByExpr) -> DbResult<ast::OrderByExpr> {
+    // Extract column name from expression
+    let column = match expr.expr {
+        sqlast::Expr::Identifier(ident) => normalize_ident(&ident),
+        sqlast::Expr::CompoundIdentifier(parts) => {
+            if parts.len() == 1 {
+                normalize_ident(&parts[0])
+            } else {
+                return Err(DbError::Parser(
+                    "qualified column names not supported in ORDER BY".into(),
+                ));
+            }
+        }
+        _ => {
+            return Err(DbError::Parser(
+                "ORDER BY supports column names only".into(),
+            ))
+        }
+    };
+
+    // Extract sort direction (default is ASC)
+    let direction = if let Some(asc) = expr.asc {
+        if asc {
+            ast::SortDirection::Asc
+        } else {
+            ast::SortDirection::Desc
+        }
+    } else {
+        // Default to ASC when not specified
+        ast::SortDirection::Asc
+    };
+
+    Ok(ast::OrderByExpr { column, direction })
 }
 
 fn extract_values(query: sqlast::Query) -> DbResult<Vec<Expr>> {

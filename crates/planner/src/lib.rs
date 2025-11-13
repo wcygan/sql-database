@@ -45,6 +45,9 @@ use expr::{BinaryOp, Expr, UnaryOp};
 use parser::{SelectItem, Statement};
 use types::Value;
 
+// Re-export for use by executor and internal use
+pub use parser::SortDirection;
+
 /// Logical plan node - optimizer-friendly representation with string names.
 ///
 /// Logical plans use table/column names and are independent of physical
@@ -62,6 +65,15 @@ pub enum LogicalPlan {
         input: Box<LogicalPlan>,
         columns: Vec<String>,
     },
+    Sort {
+        input: Box<LogicalPlan>,
+        order_by: Vec<OrderByExpr>,
+    },
+    Limit {
+        input: Box<LogicalPlan>,
+        limit: Option<u64>,
+        offset: Option<u64>,
+    },
     Insert {
         table: String,
         values: Vec<Expr>,
@@ -75,6 +87,13 @@ pub enum LogicalPlan {
         table: String,
         predicate: Option<Expr>,
     },
+}
+
+/// Logical ORDER BY expression with column name.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OrderByExpr {
+    pub column: String,
+    pub direction: SortDirection,
 }
 
 /// Physical plan node - executor-ready with resolved IDs and access methods.
@@ -101,6 +120,15 @@ pub enum PhysicalPlan {
         input: Box<PhysicalPlan>,
         columns: Vec<(String, ColumnId)>,
     },
+    Sort {
+        input: Box<PhysicalPlan>,
+        order_by: Vec<ResolvedOrderByExpr>,
+    },
+    Limit {
+        input: Box<PhysicalPlan>,
+        limit: Option<u64>,
+        offset: Option<u64>,
+    },
     Insert {
         table_id: TableId,
         values: Vec<ResolvedExpr>,
@@ -114,6 +142,13 @@ pub enum PhysicalPlan {
         table_id: TableId,
         predicate: Option<ResolvedExpr>,
     },
+}
+
+/// Physical ORDER BY expression with resolved column ID.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedOrderByExpr {
+    pub column_id: ColumnId,
+    pub direction: SortDirection,
 }
 
 /// Index predicate for simple index scans.
@@ -223,6 +258,9 @@ impl Planner {
                 columns,
                 table,
                 selection,
+                order_by,
+                limit,
+                offset,
             } => {
                 let scan = LogicalPlan::TableScan { table };
                 let with_filter = if let Some(pred) = selection {
@@ -233,7 +271,7 @@ impl Planner {
                 } else {
                     scan
                 };
-                let cols = if columns.iter().any(|c| matches!(c, SelectItem::Wildcard)) {
+                let with_project = if columns.iter().any(|c| matches!(c, SelectItem::Wildcard)) {
                     LogicalPlan::Project {
                         input: Box::new(with_filter),
                         columns: vec!["*".into()],
@@ -251,7 +289,36 @@ impl Planner {
                         columns: names,
                     }
                 };
-                Ok(cols)
+
+                // Add Sort node if ORDER BY is present
+                let with_sort = if !order_by.is_empty() {
+                    let order_exprs = order_by
+                        .into_iter()
+                        .map(|o| OrderByExpr {
+                            column: o.column,
+                            direction: o.direction,
+                        })
+                        .collect();
+                    LogicalPlan::Sort {
+                        input: Box::new(with_project),
+                        order_by: order_exprs,
+                    }
+                } else {
+                    with_project
+                };
+
+                // Add Limit node if LIMIT or OFFSET is present
+                let with_limit = if limit.is_some() || offset.is_some() {
+                    LogicalPlan::Limit {
+                        input: Box::new(with_sort),
+                        limit,
+                        offset,
+                    }
+                } else {
+                    with_sort
+                };
+
+                Ok(with_limit)
             }
         }
     }
@@ -297,6 +364,19 @@ impl Planner {
                 input: Box::new(Self::pushdown(*input)),
                 columns,
             },
+            Sort { input, order_by } => Sort {
+                input: Box::new(Self::pushdown(*input)),
+                order_by,
+            },
+            Limit {
+                input,
+                limit,
+                offset,
+            } => Limit {
+                input: Box::new(Self::pushdown(*input)),
+                limit,
+                offset,
+            },
             Insert { .. } | Update { .. } | Delete { .. } | TableScan { .. } => plan,
         }
     }
@@ -334,6 +414,19 @@ impl Planner {
             Filter { input, predicate } => Filter {
                 input: Box::new(Self::prune_project(*input)),
                 predicate,
+            },
+            Sort { input, order_by } => Sort {
+                input: Box::new(Self::prune_project(*input)),
+                order_by,
+            },
+            Limit {
+                input,
+                limit,
+                offset,
+            } => Limit {
+                input: Box::new(Self::prune_project(*input)),
+                limit,
+                offset,
             },
             other => other,
         }
@@ -460,6 +553,47 @@ impl Planner {
                     predicate: pred,
                 })
             }
+            LogicalPlan::Sort { input, order_by } => {
+                let input_physical = Self::bind(*input, ctx)?;
+                let schema = Self::output_schema(&input_physical);
+
+                // Resolve column names to column IDs
+                let resolved_order_by = order_by
+                    .into_iter()
+                    .map(|order_expr| {
+                        let col_id = schema
+                            .iter()
+                            .position(|c| c.eq_ignore_ascii_case(&order_expr.column))
+                            .ok_or_else(|| {
+                                DbError::Planner(format!(
+                                    "unknown column '{}' in ORDER BY",
+                                    order_expr.column
+                                ))
+                            })? as ColumnId;
+                        Ok(ResolvedOrderByExpr {
+                            column_id: col_id,
+                            direction: order_expr.direction,
+                        })
+                    })
+                    .collect::<DbResult<Vec<_>>>()?;
+
+                Ok(PhysicalPlan::Sort {
+                    input: Box::new(input_physical),
+                    order_by: resolved_order_by,
+                })
+            }
+            LogicalPlan::Limit {
+                input,
+                limit,
+                offset,
+            } => {
+                let input_physical = Self::bind(*input, ctx)?;
+                Ok(PhysicalPlan::Limit {
+                    input: Box::new(input_physical),
+                    limit,
+                    offset,
+                })
+            }
         }
     }
 
@@ -469,9 +603,10 @@ impl Planner {
             PhysicalPlan::SeqScan { schema, .. } | PhysicalPlan::IndexScan { schema, .. } => {
                 schema.clone()
             }
-            PhysicalPlan::Filter { input, .. } | PhysicalPlan::Project { input, .. } => {
-                Self::output_schema(input)
-            }
+            PhysicalPlan::Filter { input, .. }
+            | PhysicalPlan::Project { input, .. }
+            | PhysicalPlan::Sort { input, .. }
+            | PhysicalPlan::Limit { input, .. } => Self::output_schema(input),
             PhysicalPlan::Insert { .. }
             | PhysicalPlan::Update { .. }
             | PhysicalPlan::Delete { .. } => vec![],
@@ -600,6 +735,21 @@ pub fn explain_logical(p: &LogicalPlan) -> String {
         LogicalPlan::Delete { table, predicate } => {
             format!("Delete table={} pred={:?}", table, predicate)
         }
+        LogicalPlan::Sort { input, order_by } => format!(
+            "Sort {:?}\n  {}",
+            order_by,
+            indent(&explain_logical(input))
+        ),
+        LogicalPlan::Limit {
+            input,
+            limit,
+            offset,
+        } => format!(
+            "Limit limit={:?} offset={:?}\n  {}",
+            limit,
+            offset,
+            indent(&explain_logical(input))
+        ),
     }
 }
 
@@ -640,6 +790,21 @@ pub fn explain_physical(p: &PhysicalPlan) -> String {
             table_id,
             predicate,
         } => format!("Delete table_id={} pred={:?}", table_id.0, predicate),
+        PhysicalPlan::Sort { input, order_by } => format!(
+            "Sort {:?}\n  {}",
+            order_by,
+            indent(&explain_physical(input))
+        ),
+        PhysicalPlan::Limit {
+            input,
+            limit,
+            offset,
+        } => format!(
+            "Limit limit={:?} offset={:?}\n  {}",
+            limit,
+            offset,
+            indent(&explain_physical(input))
+        ),
     }
 }
 

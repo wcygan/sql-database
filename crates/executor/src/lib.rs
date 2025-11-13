@@ -1319,9 +1319,11 @@ mod tests {
 mod builder;
 mod dml;
 mod filter;
+mod limit;
 mod pk_index;
 mod project;
 mod scan;
+mod sort;
 
 pub use builder::build_executor;
 pub use pk_index::PrimaryKeyIndex;

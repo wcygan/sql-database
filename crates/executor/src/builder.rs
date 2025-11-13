@@ -3,8 +3,10 @@
 use crate::{
     dml::{DeleteExec, InsertExec, UpdateExec},
     filter::FilterExec,
+    limit::LimitExec,
     project::ProjectExec,
     scan::{IndexScanExec, SeqScanExec},
+    sort::{SortExec, SortKey},
     Executor,
 };
 use common::DbResult;
@@ -91,6 +93,27 @@ pub fn build_executor(plan: PhysicalPlan) -> DbResult<Box<dyn Executor>> {
 
             let schema = vec![];
             Ok(Box::new(DeleteExec::new(table_id, schema, input)))
+        }
+
+        PhysicalPlan::Sort { input, order_by } => {
+            let child = build_executor(*input)?;
+            let sort_keys = order_by
+                .into_iter()
+                .map(|o| SortKey {
+                    column_id: o.column_id,
+                    direction: o.direction,
+                })
+                .collect();
+            Ok(Box::new(SortExec::new(child, sort_keys)))
+        }
+
+        PhysicalPlan::Limit {
+            input,
+            limit,
+            offset,
+        } => {
+            let child = build_executor(*input)?;
+            Ok(Box::new(LimitExec::new(child, limit, offset)))
         }
     }
 }

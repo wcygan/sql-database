@@ -79,6 +79,7 @@ fn parse_dml_statements() {
             table,
             columns,
             selection,
+            ..
         } => {
             assert_eq!(table, "posts");
             assert_eq!(columns.len(), 2);
@@ -211,6 +212,7 @@ fn sql_subset_v1_select_variants() {
             table,
             columns,
             selection,
+            ..
         } => {
             assert_eq!(table, "users");
             assert_eq!(
@@ -745,4 +747,238 @@ fn create_table_primary_key_case_insensitive() {
         }
         _ => panic!("expected CreateTable statement"),
     }
+}
+
+#[test]
+fn select_with_order_by_asc() {
+    let stmt = stmt("SELECT * FROM users ORDER BY name ASC");
+    match stmt {
+        Statement::Select {
+            table,
+            columns,
+            selection,
+            order_by,
+            limit,
+            offset,
+        } => {
+            assert_eq!(table, "users");
+            assert_eq!(columns, vec![SelectItem::Wildcard]);
+            assert!(selection.is_none());
+            assert_eq!(order_by.len(), 1);
+            assert_eq!(order_by[0].column, "name");
+            assert_eq!(order_by[0].direction, SortDirection::Asc);
+            assert!(limit.is_none());
+            assert!(offset.is_none());
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_with_order_by_desc() {
+    let stmt = stmt("SELECT id, name FROM users ORDER BY age DESC");
+    match stmt {
+        Statement::Select { order_by, .. } => {
+            assert_eq!(order_by.len(), 1);
+            assert_eq!(order_by[0].column, "age");
+            assert_eq!(order_by[0].direction, SortDirection::Desc);
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_with_multiple_order_by() {
+    let stmt = stmt("SELECT * FROM users ORDER BY age DESC, name ASC");
+    match stmt {
+        Statement::Select { order_by, .. } => {
+            assert_eq!(order_by.len(), 2);
+            assert_eq!(order_by[0].column, "age");
+            assert_eq!(order_by[0].direction, SortDirection::Desc);
+            assert_eq!(order_by[1].column, "name");
+            assert_eq!(order_by[1].direction, SortDirection::Asc);
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_with_order_by_default_direction() {
+    let stmt = stmt("SELECT * FROM users ORDER BY name");
+    match stmt {
+        Statement::Select { order_by, .. } => {
+            assert_eq!(order_by.len(), 1);
+            assert_eq!(order_by[0].column, "name");
+            assert_eq!(order_by[0].direction, SortDirection::Asc);
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_with_limit_only() {
+    let stmt = stmt("SELECT * FROM users LIMIT 10");
+    match stmt {
+        Statement::Select {
+            limit,
+            offset,
+            order_by,
+            ..
+        } => {
+            assert_eq!(limit, Some(10));
+            assert!(offset.is_none());
+            assert_eq!(order_by.len(), 0);
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_with_offset_only() {
+    let stmt = stmt("SELECT * FROM users OFFSET 5");
+    match stmt {
+        Statement::Select {
+            limit,
+            offset,
+            order_by,
+            ..
+        } => {
+            assert!(limit.is_none());
+            assert_eq!(offset, Some(5));
+            assert_eq!(order_by.len(), 0);
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_with_limit_and_offset() {
+    let stmt = stmt("SELECT * FROM users LIMIT 20 OFFSET 10");
+    match stmt {
+        Statement::Select { limit, offset, .. } => {
+            assert_eq!(limit, Some(20));
+            assert_eq!(offset, Some(10));
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_with_order_by_and_limit() {
+    let stmt = stmt("SELECT * FROM users ORDER BY age DESC LIMIT 5");
+    match stmt {
+        Statement::Select {
+            order_by, limit, ..
+        } => {
+            assert_eq!(order_by.len(), 1);
+            assert_eq!(order_by[0].column, "age");
+            assert_eq!(order_by[0].direction, SortDirection::Desc);
+            assert_eq!(limit, Some(5));
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_with_order_by_and_offset() {
+    let stmt = stmt("SELECT * FROM users ORDER BY name ASC OFFSET 100");
+    match stmt {
+        Statement::Select {
+            order_by, offset, ..
+        } => {
+            assert_eq!(order_by.len(), 1);
+            assert_eq!(order_by[0].column, "name");
+            assert_eq!(offset, Some(100));
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_with_order_by_limit_and_offset() {
+    let stmt = stmt("SELECT id, name FROM users ORDER BY age DESC, name ASC LIMIT 10 OFFSET 20");
+    match stmt {
+        Statement::Select {
+            columns,
+            order_by,
+            limit,
+            offset,
+            ..
+        } => {
+            assert_eq!(
+                columns,
+                vec![
+                    SelectItem::Column("id".into()),
+                    SelectItem::Column("name".into())
+                ]
+            );
+            assert_eq!(order_by.len(), 2);
+            assert_eq!(order_by[0].column, "age");
+            assert_eq!(order_by[0].direction, SortDirection::Desc);
+            assert_eq!(order_by[1].column, "name");
+            assert_eq!(order_by[1].direction, SortDirection::Asc);
+            assert_eq!(limit, Some(10));
+            assert_eq!(offset, Some(20));
+        }
+        other => panic!("expected Select, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_order_by_rejects_qualified_columns() {
+    let err = parse_sql("SELECT * FROM users ORDER BY users.name")
+        .expect_err("qualified column names in ORDER BY should fail");
+    assert!(
+        format!("{err:?}").contains("qualified column names not supported in ORDER BY"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn select_order_by_rejects_expressions() {
+    let err = parse_sql("SELECT * FROM users ORDER BY age + 1")
+        .expect_err("expressions in ORDER BY should fail");
+    assert!(
+        format!("{err:?}").contains("ORDER BY supports column names only"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn select_limit_rejects_negative_values() {
+    let err = parse_sql("SELECT * FROM users LIMIT -5").expect_err("negative LIMIT should fail");
+    assert!(
+        format!("{err:?}").contains("LIMIT must be a non-negative integer"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn select_offset_rejects_negative_values() {
+    let err =
+        parse_sql("SELECT * FROM users OFFSET -10").expect_err("negative OFFSET should fail");
+    assert!(
+        format!("{err:?}").contains("OFFSET must be a non-negative integer"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn select_limit_rejects_non_numeric_values() {
+    let err =
+        parse_sql("SELECT * FROM users LIMIT 'abc'").expect_err("non-numeric LIMIT should fail");
+    assert!(
+        format!("{err:?}").contains("LIMIT must be a non-negative integer"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn select_offset_rejects_non_numeric_values() {
+    let err = parse_sql("SELECT * FROM users OFFSET 'xyz'")
+        .expect_err("non-numeric OFFSET should fail");
+    assert!(
+        format!("{err:?}").contains("OFFSET must be a non-negative integer"),
+        "{err:?}"
+    );
 }

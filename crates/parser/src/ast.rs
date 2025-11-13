@@ -1,5 +1,19 @@
 use expr::Expr;
 
+/// Sort direction for ORDER BY clauses.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
+/// ORDER BY expression specifying column and sort direction.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OrderByExpr {
+    pub column: String,
+    pub direction: SortDirection,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement {
     CreateTable {
@@ -26,6 +40,9 @@ pub enum Statement {
         columns: Vec<SelectItem>,
         table: String,
         selection: Option<Expr>,
+        order_by: Vec<OrderByExpr>,
+        limit: Option<u64>,
+        offset: Option<u64>,
     },
     Update {
         table: String,

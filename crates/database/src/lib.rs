@@ -506,6 +506,8 @@ fn infer_schema(plan: &PhysicalPlan) -> Vec<String> {
         PhysicalPlan::Project { columns, .. } => {
             columns.iter().map(|(name, _)| name.clone()).collect()
         }
+        PhysicalPlan::Sort { input, .. } => infer_schema(input),
+        PhysicalPlan::Limit { input, .. } => infer_schema(input),
         PhysicalPlan::Insert { .. } | PhysicalPlan::Update { .. } | PhysicalPlan::Delete { .. } => {
             vec![]
         }
