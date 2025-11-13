@@ -173,7 +173,9 @@ fn eval_binary_op(left: Value, op: expr::BinaryOp, right: Value) -> DbResult<Val
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::helpers::{assert_exhausted, assert_next_row, create_test_catalog, MockExecutor};
+    use crate::tests::helpers::{
+        assert_exhausted, assert_next_row, create_test_catalog, MockExecutor,
+    };
     use expr::{BinaryOp, UnaryOp};
     use testsupport::prelude::*;
 

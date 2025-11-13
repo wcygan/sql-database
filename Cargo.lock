@@ -1501,10 +1501,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "client",
  "common",
  "database",
  "protocol",
  "tempfile",
+ "testsupport",
  "tokio",
  "types",
 ]
@@ -1714,6 +1716,7 @@ dependencies = [
  "planner",
  "pretty_assertions",
  "proptest",
+ "protocol",
  "storage",
  "tempfile",
  "thiserror 1.0.69",

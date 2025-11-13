@@ -337,8 +337,7 @@ impl Executor for DeleteExec {
 mod tests {
     use super::*;
     use crate::tests::helpers::{
-        assert_error_contains, assert_exhausted, assert_next_row, create_test_catalog,
-        MockExecutor,
+        assert_error_contains, assert_exhausted, assert_next_row, create_test_catalog, MockExecutor,
     };
     use crate::{execute_dml, execute_query};
     use expr::BinaryOp;
