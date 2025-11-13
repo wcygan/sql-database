@@ -3,6 +3,7 @@
 use crate::{filter::eval_resolved_expr, ExecutionContext, Executor};
 use common::{ColumnId, DbResult, ExecutionStats, Row, TableId};
 use planner::ResolvedExpr;
+use std::time::Instant;
 use storage::HeapTable;
 use types::Value;
 use wal::WalRecord;
@@ -34,12 +35,18 @@ impl InsertExec {
 
 impl Executor for InsertExec {
     fn open(&mut self, _ctx: &mut ExecutionContext) -> DbResult<()> {
+        let start = Instant::now();
+        self.stats = ExecutionStats::default();
         self.executed = false;
+        self.stats.open_time = start.elapsed();
         Ok(())
     }
 
     fn next(&mut self, ctx: &mut ExecutionContext) -> DbResult<Option<Row>> {
+        let start = Instant::now();
+
         if self.executed {
+            self.stats.total_next_time += start.elapsed();
             return Ok(None);
         }
         self.executed = true;
@@ -90,10 +97,14 @@ impl Executor for InsertExec {
         ctx.save_pk_index(self.table_id)?;
 
         // Return single row with affected count
+        self.stats.rows_produced += 1;
+        self.stats.total_next_time += start.elapsed();
         Ok(Some(Row::new(vec![Value::Int(1)])))
     }
 
     fn close(&mut self, _ctx: &mut ExecutionContext) -> DbResult<()> {
+        let start = Instant::now();
+        self.stats.close_time = start.elapsed();
         Ok(())
     }
 
@@ -174,6 +185,9 @@ impl UpdateExec {
 
 impl Executor for UpdateExec {
     fn open(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
+        let start = Instant::now();
+        self.stats = ExecutionStats::default();
+
         // Validate that no assignments modify primary key columns
         let table_meta = ctx.catalog.table_by_id(self.table_id)?;
         if let Some(pk_columns) = &table_meta.primary_key {
@@ -188,11 +202,16 @@ impl Executor for UpdateExec {
         }
 
         self.executed = false;
-        self.input.open(ctx)
+        let result = self.input.open(ctx)?;
+        self.stats.open_time = start.elapsed();
+        Ok(result)
     }
 
     fn next(&mut self, ctx: &mut ExecutionContext) -> DbResult<Option<Row>> {
+        let start = Instant::now();
+
         if self.executed {
+            self.stats.total_next_time += start.elapsed();
             return Ok(None);
         }
 
@@ -231,11 +250,16 @@ impl Executor for UpdateExec {
         self.executed = true;
 
         // Return count of matched rows
+        self.stats.rows_produced += 1;
+        self.stats.total_next_time += start.elapsed();
         Ok(Some(Row::new(vec![Value::Int(count)])))
     }
 
     fn close(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
-        self.input.close(ctx)
+        let start = Instant::now();
+        let result = self.input.close(ctx)?;
+        self.stats.close_time = start.elapsed();
+        Ok(result)
     }
 
     fn schema(&self) -> &[String] {
@@ -275,12 +299,19 @@ impl DeleteExec {
 
 impl Executor for DeleteExec {
     fn open(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
+        let start = Instant::now();
+        self.stats = ExecutionStats::default();
         self.executed = false;
-        self.input.open(ctx)
+        let result = self.input.open(ctx)?;
+        self.stats.open_time = start.elapsed();
+        Ok(result)
     }
 
     fn next(&mut self, ctx: &mut ExecutionContext) -> DbResult<Option<Row>> {
+        let start = Instant::now();
+
         if self.executed {
+            self.stats.total_next_time += start.elapsed();
             return Ok(None);
         }
 
@@ -317,11 +348,16 @@ impl Executor for DeleteExec {
         ctx.save_pk_index(self.table_id)?;
 
         // Return count of matched rows
+        self.stats.rows_produced += 1;
+        self.stats.total_next_time += start.elapsed();
         Ok(Some(Row::new(vec![Value::Int(count)])))
     }
 
     fn close(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
-        self.input.close(ctx)
+        let start = Instant::now();
+        let result = self.input.close(ctx)?;
+        self.stats.close_time = start.elapsed();
+        Ok(result)
     }
 
     fn schema(&self) -> &[String] {

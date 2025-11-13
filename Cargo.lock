@@ -513,6 +513,7 @@ dependencies = [
  "executor",
  "parser",
  "planner",
+ "tempfile",
  "tokio",
  "types",
  "wal",
