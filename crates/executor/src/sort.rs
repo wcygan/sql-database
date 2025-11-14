@@ -171,3 +171,356 @@ fn compare_values(a: &Value, b: &Value) -> Ordering {
         (Value::Text(_), Value::Int(_)) => Ordering::Greater,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::helpers::{
+        assert_exhausted, assert_next_row, create_test_catalog, MockExecutor,
+    };
+    use buffer::FilePager;
+    use planner::SortDirection;
+    use wal::Wal;
+
+    fn create_test_context() -> ExecutionContext<'static> {
+        let catalog = Box::leak(Box::new(create_test_catalog()));
+        let temp_dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        let pager = Box::leak(Box::new(FilePager::new(temp_dir.path(), 10)));
+        let wal = Box::leak(Box::new(Wal::open(temp_dir.path().join("test.wal")).unwrap()));
+
+        ExecutionContext::new(catalog, pager, wal, temp_dir.path().into())
+    }
+
+    #[test]
+    fn sort_single_column_ascending() {
+        let mut ctx = create_test_context();
+
+        // Input: rows with Int values in random order
+        let rows = vec![
+            Row::new(vec![Value::Int(3)]),
+            Row::new(vec![Value::Int(1)]),
+            Row::new(vec![Value::Int(2)]),
+        ];
+        let input = Box::new(MockExecutor::new(rows, vec!["value".to_string()]));
+
+        let sort_keys = vec![SortKey {
+            column_id: 0,
+            direction: SortDirection::Asc,
+        }];
+        let mut sort_exec = SortExec::new(input, sort_keys);
+
+        sort_exec.open(&mut ctx).unwrap();
+
+        // Should return rows in ascending order
+        assert_next_row(&mut sort_exec, &mut ctx, Row::new(vec![Value::Int(1)]));
+        assert_next_row(&mut sort_exec, &mut ctx, Row::new(vec![Value::Int(2)]));
+        assert_next_row(&mut sort_exec, &mut ctx, Row::new(vec![Value::Int(3)]));
+        assert_exhausted(&mut sort_exec, &mut ctx);
+
+        sort_exec.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn sort_single_column_descending() {
+        let mut ctx = create_test_context();
+
+        let rows = vec![
+            Row::new(vec![Value::Int(1)]),
+            Row::new(vec![Value::Int(3)]),
+            Row::new(vec![Value::Int(2)]),
+        ];
+        let input = Box::new(MockExecutor::new(rows, vec!["value".to_string()]));
+
+        let sort_keys = vec![SortKey {
+            column_id: 0,
+            direction: SortDirection::Desc,
+        }];
+        let mut sort_exec = SortExec::new(input, sort_keys);
+
+        sort_exec.open(&mut ctx).unwrap();
+
+        assert_next_row(&mut sort_exec, &mut ctx, Row::new(vec![Value::Int(3)]));
+        assert_next_row(&mut sort_exec, &mut ctx, Row::new(vec![Value::Int(2)]));
+        assert_next_row(&mut sort_exec, &mut ctx, Row::new(vec![Value::Int(1)]));
+        assert_exhausted(&mut sort_exec, &mut ctx);
+
+        sort_exec.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn sort_multiple_columns() {
+        let mut ctx = create_test_context();
+
+        // Sort by first column ASC, then second column DESC
+        let rows = vec![
+            Row::new(vec![Value::Int(1), Value::Int(10)]),
+            Row::new(vec![Value::Int(2), Value::Int(30)]),
+            Row::new(vec![Value::Int(1), Value::Int(20)]),
+            Row::new(vec![Value::Int(2), Value::Int(10)]),
+        ];
+        let input = Box::new(MockExecutor::new(
+            rows,
+            vec!["a".to_string(), "b".to_string()],
+        ));
+
+        let sort_keys = vec![
+            SortKey {
+                column_id: 0,
+                direction: SortDirection::Asc,
+            },
+            SortKey {
+                column_id: 1,
+                direction: SortDirection::Desc,
+            },
+        ];
+        let mut sort_exec = SortExec::new(input, sort_keys);
+
+        sort_exec.open(&mut ctx).unwrap();
+
+        // First column 1 rows, sorted by second column DESC (20, 10)
+        assert_next_row(
+            &mut sort_exec,
+            &mut ctx,
+            Row::new(vec![Value::Int(1), Value::Int(20)]),
+        );
+        assert_next_row(
+            &mut sort_exec,
+            &mut ctx,
+            Row::new(vec![Value::Int(1), Value::Int(10)]),
+        );
+        // Then column 2 rows, sorted by second column DESC (30, 10)
+        assert_next_row(
+            &mut sort_exec,
+            &mut ctx,
+            Row::new(vec![Value::Int(2), Value::Int(30)]),
+        );
+        assert_next_row(
+            &mut sort_exec,
+            &mut ctx,
+            Row::new(vec![Value::Int(2), Value::Int(10)]),
+        );
+        assert_exhausted(&mut sort_exec, &mut ctx);
+
+        sort_exec.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn sort_with_null_values() {
+        let mut ctx = create_test_context();
+
+        // NULLs should sort before non-NULL values
+        let rows = vec![
+            Row::new(vec![Value::Int(3)]),
+            Row::new(vec![Value::Null]),
+            Row::new(vec![Value::Int(1)]),
+            Row::new(vec![Value::Null]),
+        ];
+        let input = Box::new(MockExecutor::new(rows, vec!["value".to_string()]));
+
+        let sort_keys = vec![SortKey {
+            column_id: 0,
+            direction: SortDirection::Asc,
+        }];
+        let mut sort_exec = SortExec::new(input, sort_keys);
+
+        sort_exec.open(&mut ctx).unwrap();
+
+        // NULLs first, then sorted values
+        assert_next_row(&mut sort_exec, &mut ctx, Row::new(vec![Value::Null]));
+        assert_next_row(&mut sort_exec, &mut ctx, Row::new(vec![Value::Null]));
+        assert_next_row(&mut sort_exec, &mut ctx, Row::new(vec![Value::Int(1)]));
+        assert_next_row(&mut sort_exec, &mut ctx, Row::new(vec![Value::Int(3)]));
+        assert_exhausted(&mut sort_exec, &mut ctx);
+
+        sort_exec.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn sort_text_lexicographic() {
+        let mut ctx = create_test_context();
+
+        let rows = vec![
+            Row::new(vec![Value::Text("zebra".to_string())]),
+            Row::new(vec![Value::Text("apple".to_string())]),
+            Row::new(vec![Value::Text("mango".to_string())]),
+        ];
+        let input = Box::new(MockExecutor::new(rows, vec!["word".to_string()]));
+
+        let sort_keys = vec![SortKey {
+            column_id: 0,
+            direction: SortDirection::Asc,
+        }];
+        let mut sort_exec = SortExec::new(input, sort_keys);
+
+        sort_exec.open(&mut ctx).unwrap();
+
+        assert_next_row(
+            &mut sort_exec,
+            &mut ctx,
+            Row::new(vec![Value::Text("apple".to_string())]),
+        );
+        assert_next_row(
+            &mut sort_exec,
+            &mut ctx,
+            Row::new(vec![Value::Text("mango".to_string())]),
+        );
+        assert_next_row(
+            &mut sort_exec,
+            &mut ctx,
+            Row::new(vec![Value::Text("zebra".to_string())]),
+        );
+        assert_exhausted(&mut sort_exec, &mut ctx);
+
+        sort_exec.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn sort_empty_input() {
+        let mut ctx = create_test_context();
+
+        let input = Box::new(MockExecutor::new(vec![], vec!["value".to_string()]));
+        let sort_keys = vec![SortKey {
+            column_id: 0,
+            direction: SortDirection::Asc,
+        }];
+        let mut sort_exec = SortExec::new(input, sort_keys);
+
+        sort_exec.open(&mut ctx).unwrap();
+        assert_exhausted(&mut sort_exec, &mut ctx);
+        sort_exec.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn sort_single_row() {
+        let mut ctx = create_test_context();
+
+        let rows = vec![Row::new(vec![Value::Int(42)])];
+        let input = Box::new(MockExecutor::new(rows, vec!["value".to_string()]));
+        let sort_keys = vec![SortKey {
+            column_id: 0,
+            direction: SortDirection::Asc,
+        }];
+        let mut sort_exec = SortExec::new(input, sort_keys);
+
+        sort_exec.open(&mut ctx).unwrap();
+        assert_next_row(&mut sort_exec, &mut ctx, Row::new(vec![Value::Int(42)]));
+        assert_exhausted(&mut sort_exec, &mut ctx);
+        sort_exec.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn sort_schema_delegation() {
+        let ctx = create_test_context();
+
+        let input = Box::new(MockExecutor::new(
+            vec![],
+            vec!["id".to_string(), "name".to_string()],
+        ));
+        let sort_keys = vec![SortKey {
+            column_id: 0,
+            direction: SortDirection::Asc,
+        }];
+        let sort_exec = SortExec::new(input, sort_keys);
+
+        assert_eq!(sort_exec.schema(), &["id", "name"]);
+        drop(ctx);
+    }
+
+    #[test]
+    fn sort_stable_sort_preserves_order() {
+        let mut ctx = create_test_context();
+
+        // Multiple rows with same sort key value should maintain insertion order
+        let rows = vec![
+            Row::new(vec![Value::Int(1), Value::Text("first".to_string())]),
+            Row::new(vec![Value::Int(1), Value::Text("second".to_string())]),
+            Row::new(vec![Value::Int(1), Value::Text("third".to_string())]),
+        ];
+        let input = Box::new(MockExecutor::new(
+            rows,
+            vec!["value".to_string(), "label".to_string()],
+        ));
+
+        let sort_keys = vec![SortKey {
+            column_id: 0,
+            direction: SortDirection::Asc,
+        }];
+        let mut sort_exec = SortExec::new(input, sort_keys);
+
+        sort_exec.open(&mut ctx).unwrap();
+
+        // Should maintain insertion order for equal keys
+        assert_next_row(
+            &mut sort_exec,
+            &mut ctx,
+            Row::new(vec![Value::Int(1), Value::Text("first".to_string())]),
+        );
+        assert_next_row(
+            &mut sort_exec,
+            &mut ctx,
+            Row::new(vec![Value::Int(1), Value::Text("second".to_string())]),
+        );
+        assert_next_row(
+            &mut sort_exec,
+            &mut ctx,
+            Row::new(vec![Value::Int(1), Value::Text("third".to_string())]),
+        );
+        assert_exhausted(&mut sort_exec, &mut ctx);
+
+        sort_exec.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn sort_stats_tracking() {
+        let mut ctx = create_test_context();
+
+        let rows = vec![
+            Row::new(vec![Value::Int(3)]),
+            Row::new(vec![Value::Int(1)]),
+            Row::new(vec![Value::Int(2)]),
+        ];
+        let input = Box::new(MockExecutor::new(rows, vec!["value".to_string()]));
+        let sort_keys = vec![SortKey {
+            column_id: 0,
+            direction: SortDirection::Asc,
+        }];
+        let mut sort_exec = SortExec::new(input, sort_keys);
+
+        sort_exec.open(&mut ctx).unwrap();
+
+        // Consume all rows
+        while sort_exec.next(&mut ctx).unwrap().is_some() {}
+
+        sort_exec.close(&mut ctx).unwrap();
+
+        let stats = sort_exec.stats().unwrap();
+        assert_eq!(stats.rows_produced, 3);
+        assert!(stats.open_time.as_nanos() > 0);
+        assert!(stats.total_next_time.as_nanos() > 0);
+        assert!(stats.close_time.as_nanos() > 0);
+    }
+
+    #[test]
+    fn sort_open_resets_state() {
+        let mut ctx = create_test_context();
+
+        let rows = vec![Row::new(vec![Value::Int(1)])];
+        let input = Box::new(MockExecutor::new(rows, vec!["value".to_string()]));
+        let sort_keys = vec![SortKey {
+            column_id: 0,
+            direction: SortDirection::Asc,
+        }];
+        let mut sort_exec = SortExec::new(input, sort_keys);
+
+        // First execution
+        sort_exec.open(&mut ctx).unwrap();
+        assert_next_row(&mut sort_exec, &mut ctx, Row::new(vec![Value::Int(1)]));
+        sort_exec.close(&mut ctx).unwrap();
+
+        // Second open should reset state
+        // Note: MockExecutor is exhausted, so this tests that sorted_rows is cleared
+        sort_exec.open(&mut ctx).unwrap();
+        assert_exhausted(&mut sort_exec, &mut ctx);
+        sort_exec.close(&mut ctx).unwrap();
+    }
+}

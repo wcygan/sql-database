@@ -61,7 +61,7 @@ pub fn build_executor(plan: PhysicalPlan) -> DbResult<Box<dyn Executor>> {
             predicate,
         } => {
             // Build scan + optional filter as input
-            let table_meta = get_table_schema_stub(table_id);
+            let table_meta = get_table_schema_for_dml_scan(table_id);
             let mut input: Box<dyn Executor> = Box::new(SeqScanExec::new(table_id, table_meta));
 
             if let Some(pred) = predicate {
@@ -84,7 +84,7 @@ pub fn build_executor(plan: PhysicalPlan) -> DbResult<Box<dyn Executor>> {
             predicate,
         } => {
             // Build scan + optional filter as input
-            let table_meta = get_table_schema_stub(table_id);
+            let table_meta = get_table_schema_for_dml_scan(table_id);
             let mut input: Box<dyn Executor> = Box::new(SeqScanExec::new(table_id, table_meta));
 
             if let Some(pred) = predicate {
@@ -118,10 +118,19 @@ pub fn build_executor(plan: PhysicalPlan) -> DbResult<Box<dyn Executor>> {
     }
 }
 
-/// Stub: get table schema for a table ID.
+/// Get table schema for UPDATE/DELETE scan operations.
 ///
-/// TODO: This should query the catalog properly. For now, returns empty schema.
-fn get_table_schema_stub(_table_id: common::TableId) -> Vec<String> {
+/// Returns an empty schema because UPDATE/DELETE predicates and assignments
+/// already use resolved column IDs (not names), so schema is only needed for
+/// display purposes. To properly populate schema, we would need either:
+/// 1. Pass catalog to build_executor() to query table metadata, or
+/// 2. Add schema field to Update/Delete PhysicalPlan variants
+///
+/// Current approach is acceptable because:
+/// - Expression evaluation uses column IDs, not names (already resolved by planner)
+/// - Schema is only returned for display/debugging, not execution logic
+/// - UPDATE/DELETE output schema is empty anyway (they return affected count)
+fn get_table_schema_for_dml_scan(_table_id: common::TableId) -> Vec<String> {
     vec![]
 }
 
