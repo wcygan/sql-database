@@ -150,25 +150,34 @@ Support `SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id`.
 ---
 
 ### ORDER BY and LIMIT/OFFSET
-**Status**: Not Started
+**Status**: ✅ Completed
 **Complexity**: Medium
 **Impact**: Medium
 
 Support `SELECT * FROM users ORDER BY name ASC LIMIT 10 OFFSET 20`.
 
-**Implementation approach:**
-- Extend parser for ORDER BY/LIMIT/OFFSET clauses
-- Implement SortExec operator (in-memory sort for small result sets)
-- Add external merge sort for large result sets exceeding memory
-- Implement LimitExec operator (early termination optimization)
-- Optimize LIMIT pushdown (stop scanning when limit reached)
+**Completed (commits af74bca, 510cb60, a28c238):**
+- ✅ Parser support for ORDER BY/LIMIT/OFFSET clauses (SortDirection enum, OrderByExpr)
+- ✅ SortExec operator with stable sort (materializing, in-memory sorting)
+- ✅ LimitExec operator with early termination optimization
+- ✅ Planner integration (Sort/Limit physical plan nodes)
+- ✅ Builder integration (construct Sort/Limit operators from plans)
+- ✅ Comprehensive unit tests (11 tests for SortExec, 13 tests for LimitExec)
+- ✅ Comprehensive integration tests (15 tests including pagination scenarios)
+- ✅ ExecutionStats tracking for both operators
+
+**Not yet implemented:**
+- External merge sort for large result sets exceeding memory
+- LIMIT pushdown optimization through complex query plans
 
 **Related files:**
-- `crates/parser/src/ast.rs` - add OrderBy/Limit/Offset to SelectStatement
-- `crates/executor/src/` - create `sort.rs` and `limit.rs`
-- `crates/planner/src/lib.rs` - add sort/limit planning
+- `crates/parser/src/ast.rs:37-43` - OrderBy/Limit/Offset in SelectStatement
+- `crates/executor/src/sort.rs` - SortExec implementation + 11 unit tests
+- `crates/executor/src/limit.rs` - LimitExec implementation + 13 unit tests
+- `crates/planner/src/lib.rs` - Sort/Limit planning logic
+- `crates/database/tests/order_limit_offset.rs` - 15 integration tests
 
-**Educational value**: External sorting, top-K algorithms, early termination optimization
+**Educational value**: Materialization vs pipelining, stable sorting, pagination patterns, early termination
 
 ---
 
