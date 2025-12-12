@@ -735,11 +735,9 @@ pub fn explain_logical(p: &LogicalPlan) -> String {
         LogicalPlan::Delete { table, predicate } => {
             format!("Delete table={} pred={:?}", table, predicate)
         }
-        LogicalPlan::Sort { input, order_by } => format!(
-            "Sort {:?}\n  {}",
-            order_by,
-            indent(&explain_logical(input))
-        ),
+        LogicalPlan::Sort { input, order_by } => {
+            format!("Sort {:?}\n  {}", order_by, indent(&explain_logical(input)))
+        }
         LogicalPlan::Limit {
             input,
             limit,

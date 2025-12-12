@@ -13,10 +13,13 @@ async fn explain_analyze_select_query() -> Result<()> {
         .await?;
     db.execute("INSERT INTO users VALUES (1, 'Alice', 30)")
         .await?;
-    db.execute("INSERT INTO users VALUES (2, 'Bob', 25)").await?;
+    db.execute("INSERT INTO users VALUES (2, 'Bob', 25)")
+        .await?;
 
     // Run EXPLAIN ANALYZE
-    let result = db.execute("EXPLAIN ANALYZE SELECT * FROM users WHERE age > 20").await?;
+    let result = db
+        .execute("EXPLAIN ANALYZE SELECT * FROM users WHERE age > 20")
+        .await?;
 
     // Verify we get rows back (the explain output)
     match result {
@@ -44,7 +47,8 @@ async fn explain_select_query_without_execution() -> Result<()> {
     let db = Database::new(temp_dir.path(), "catalog.json", "test.wal", 10).await?;
 
     // Create table (no data needed since we're not executing)
-    db.execute("CREATE TABLE users (id INT PRIMARY KEY, name TEXT)").await?;
+    db.execute("CREATE TABLE users (id INT PRIMARY KEY, name TEXT)")
+        .await?;
 
     // Run EXPLAIN (without ANALYZE)
     let result = db.execute("EXPLAIN SELECT * FROM users").await?;

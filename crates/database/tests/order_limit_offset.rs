@@ -15,8 +15,10 @@ async fn order_by_single_column_ascending() -> Result<()> {
         .await?;
     db.execute("INSERT INTO users VALUES (3, 'Charlie', 35)")
         .await?;
-    db.execute("INSERT INTO users VALUES (1, 'Alice', 25)").await?;
-    db.execute("INSERT INTO users VALUES (2, 'Bob', 30)").await?;
+    db.execute("INSERT INTO users VALUES (1, 'Alice', 25)")
+        .await?;
+    db.execute("INSERT INTO users VALUES (2, 'Bob', 30)")
+        .await?;
 
     // Query with ORDER BY
     let result = db.execute("SELECT * FROM users ORDER BY age ASC").await?;
@@ -94,7 +96,7 @@ async fn order_by_multiple_columns() -> Result<()> {
             // Engineering first (alphabetically), highest salary first
             assert_eq!(rows[0].values[0], Value::Int(3)); // Engineering, 120000
             assert_eq!(rows[1].values[0], Value::Int(1)); // Engineering, 100000
-            // Then Sales, highest salary first
+                                                          // Then Sales, highest salary first
             assert_eq!(rows[2].values[0], Value::Int(4)); // Sales, 90000
             assert_eq!(rows[3].values[0], Value::Int(2)); // Sales, 80000
         }
@@ -315,7 +317,8 @@ async fn offset_beyond_total_rows_returns_empty() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let db = Database::new(temp_dir.path(), "catalog.json", "test.wal", 10).await?;
 
-    db.execute("CREATE TABLE small (id INT PRIMARY KEY)").await?;
+    db.execute("CREATE TABLE small (id INT PRIMARY KEY)")
+        .await?;
     db.execute("INSERT INTO small VALUES (1)").await?;
     db.execute("INSERT INTO small VALUES (2)").await?;
 

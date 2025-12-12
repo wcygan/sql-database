@@ -185,28 +185,26 @@ fn map_select(query: sqlast::Query) -> DbResult<Statement> {
     // Extract LIMIT
     let limit = query
         .limit
-        .map(|expr| {
-            match expr {
-                sqlast::Expr::Value(sqlast::Value::Number(n, _)) => {
-                    n.parse::<u64>()
-                        .map_err(|_| DbError::Parser(format!("invalid LIMIT value: {}", n)))
-                }
-                _ => Err(DbError::Parser("LIMIT must be a non-negative integer".into())),
-            }
+        .map(|expr| match expr {
+            sqlast::Expr::Value(sqlast::Value::Number(n, _)) => n
+                .parse::<u64>()
+                .map_err(|_| DbError::Parser(format!("invalid LIMIT value: {}", n))),
+            _ => Err(DbError::Parser(
+                "LIMIT must be a non-negative integer".into(),
+            )),
         })
         .transpose()?;
 
     // Extract OFFSET
     let offset = query
         .offset
-        .map(|offset_expr| {
-            match offset_expr.value {
-                sqlast::Expr::Value(sqlast::Value::Number(n, _)) => {
-                    n.parse::<u64>()
-                        .map_err(|_| DbError::Parser(format!("invalid OFFSET value: {}", n)))
-                }
-                _ => Err(DbError::Parser("OFFSET must be a non-negative integer".into())),
-            }
+        .map(|offset_expr| match offset_expr.value {
+            sqlast::Expr::Value(sqlast::Value::Number(n, _)) => n
+                .parse::<u64>()
+                .map_err(|_| DbError::Parser(format!("invalid OFFSET value: {}", n))),
+            _ => Err(DbError::Parser(
+                "OFFSET must be a non-negative integer".into(),
+            )),
         })
         .transpose()?;
 

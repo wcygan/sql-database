@@ -52,7 +52,11 @@ async fn main() -> Result<()> {
         );
 
         let result = client.execute(&sql).await?;
-        assert_eq!(result.affected_count(), 1, "Each insert should affect 1 row");
+        assert_eq!(
+            result.affected_count(),
+            1,
+            "Each insert should affect 1 row"
+        );
 
         inserted += 1;
 

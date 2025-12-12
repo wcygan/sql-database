@@ -110,9 +110,7 @@ async fn run_server(listener: TcpListener, db: Arc<Database>) -> Result<()> {
 
 /// Read a single request from the client.
 /// Returns Ok(None) if client disconnected gracefully.
-async fn read_client_request(
-    socket: &mut TcpStream,
-) -> Result<Option<ClientRequest>> {
+async fn read_client_request(socket: &mut TcpStream) -> Result<Option<ClientRequest>> {
     match frame::read_message_async(socket).await {
         Ok(request) => Ok(Some(request)),
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
@@ -133,11 +131,7 @@ async fn read_client_request(
 
 /// Execute SQL and convert the result to a server response.
 /// Handles logging and timing internally.
-async fn execute_sql_request(
-    db: &Database,
-    sql: &str,
-    client_addr: &str,
-) -> ServerResponse {
+async fn execute_sql_request(db: &Database, sql: &str, client_addr: &str) -> ServerResponse {
     log_request(client_addr, sql);
     let start = std::time::Instant::now();
 
@@ -146,11 +140,7 @@ async fn execute_sql_request(
     match result {
         Ok(QueryResult::Rows { schema, rows }) => {
             let row_count = rows.len();
-            log_response(
-                client_addr,
-                start.elapsed(),
-                &format!("{} rows", row_count),
-            );
+            log_response(client_addr, start.elapsed(), &format!("{} rows", row_count));
             ServerResponse::Rows { schema, rows }
         }
         Ok(QueryResult::Count { affected }) => {
@@ -167,11 +157,7 @@ async fn execute_sql_request(
         }
         Err(e) => {
             let msg = e.to_string();
-            log_response(
-                client_addr,
-                start.elapsed(),
-                &format!("Error: {}", msg),
-            );
+            log_response(client_addr, start.elapsed(), &format!("Error: {}", msg));
             ServerResponse::Error {
                 code: error::map_error_to_code(&e),
                 message: msg,

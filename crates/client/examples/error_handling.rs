@@ -129,7 +129,10 @@ async fn main() -> Result<()> {
     let test_queries = vec![
         ("SLECT * FROM products", "syntax error"),
         ("SELECT * FROM missing_table", "missing table"),
-        ("INSERT INTO products VALUES (1, 'Dup')", "constraint violation"),
+        (
+            "INSERT INTO products VALUES (1, 'Dup')",
+            "constraint violation",
+        ),
     ];
 
     for (sql, expected_error) in test_queries {

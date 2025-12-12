@@ -955,8 +955,7 @@ fn select_limit_rejects_negative_values() {
 
 #[test]
 fn select_offset_rejects_negative_values() {
-    let err =
-        parse_sql("SELECT * FROM users OFFSET -10").expect_err("negative OFFSET should fail");
+    let err = parse_sql("SELECT * FROM users OFFSET -10").expect_err("negative OFFSET should fail");
     assert!(
         format!("{err:?}").contains("OFFSET must be a non-negative integer"),
         "{err:?}"
@@ -975,8 +974,8 @@ fn select_limit_rejects_non_numeric_values() {
 
 #[test]
 fn select_offset_rejects_non_numeric_values() {
-    let err = parse_sql("SELECT * FROM users OFFSET 'xyz'")
-        .expect_err("non-numeric OFFSET should fail");
+    let err =
+        parse_sql("SELECT * FROM users OFFSET 'xyz'").expect_err("non-numeric OFFSET should fail");
     assert!(
         format!("{err:?}").contains("OFFSET must be a non-negative integer"),
         "{err:?}"

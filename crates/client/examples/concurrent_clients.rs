@@ -61,12 +61,12 @@ async fn main() -> Result<()> {
 
     if let Some((_, rows)) = result.rows() {
         let total_expected = NUM_WORKERS * EVENTS_PER_WORKER;
-        println!("Expected {} rows, found {} rows", total_expected, rows.len());
-        assert_eq!(
-            rows.len() as i32,
+        println!(
+            "Expected {} rows, found {} rows",
             total_expected,
-            "Row count mismatch!"
+            rows.len()
         );
+        assert_eq!(rows.len() as i32, total_expected, "Row count mismatch!");
     }
 
     // Query events grouped by worker (demonstrates filtering)
@@ -101,11 +101,7 @@ async fn worker_task(worker_id: i32, num_events: i32) -> Result<()> {
         );
 
         let result = client.execute(&sql).await?;
-        assert_eq!(
-            result.affected_count(),
-            1,
-            "Insert should affect 1 row"
-        );
+        assert_eq!(result.affected_count(), 1, "Insert should affect 1 row");
     }
 
     client.close().await?;
