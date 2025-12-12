@@ -4,6 +4,7 @@ use crate::{ExecutionContext, Executor};
 use catalog::{Catalog, Column};
 use common::{DbError, DbResult, Row};
 use std::collections::VecDeque;
+use tempfile::TempDir;
 use types::{SqlType, Value};
 
 /// Mock executor for testing operators in isolation.
@@ -131,6 +132,25 @@ pub fn create_test_catalog() -> Catalog {
         .expect("failed to create table");
 
     catalog
+}
+
+/// Set up an ExecutionContext for testing with a temporary directory.
+///
+/// Uses Box::leak to create 'static references required by ExecutionContext.
+/// Returns the context and TempDir (keep TempDir alive for duration of test).
+pub fn setup_test_context() -> (ExecutionContext<'static>, TempDir) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let catalog = create_test_catalog();
+
+    // Leak resources for 'static lifetime (test-only pattern)
+    let catalog = Box::leak(Box::new(catalog));
+    let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+    let wal = Box::leak(Box::new(
+        wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+    ));
+
+    let ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
+    (ctx, temp_dir)
 }
 
 /// Create a row with boolean values.

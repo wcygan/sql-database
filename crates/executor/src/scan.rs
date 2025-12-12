@@ -247,25 +247,12 @@ fn compute_num_pages(heap_table: &mut impl HeapTable) -> DbResult<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::helpers::{assert_exhausted, assert_next_row, create_test_catalog};
+    use crate::tests::helpers::{
+        assert_exhausted, assert_next_row, create_test_catalog, setup_test_context,
+    };
     use catalog::Column;
     use planner::ResolvedExpr;
     use types::{SqlType, Value};
-
-    fn setup_context() -> (ExecutionContext<'static>, tempfile::TempDir) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let catalog = create_test_catalog();
-
-        // Leak resources for 'static lifetime (test-only pattern)
-        let catalog = Box::leak(Box::new(catalog));
-        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
-        let wal = Box::leak(Box::new(
-            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
-        ));
-
-        let ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
-        (ctx, temp_dir)
-    }
 
     fn insert_test_rows(
         ctx: &mut ExecutionContext,
@@ -286,7 +273,7 @@ mod tests {
 
     #[test]
     fn seq_scan_empty_table() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let mut scan = SeqScanExec::new(table_id, vec!["id".into(), "name".into()]);
@@ -298,7 +285,7 @@ mod tests {
 
     #[test]
     fn seq_scan_single_row() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Insert a row
@@ -328,7 +315,7 @@ mod tests {
 
     #[test]
     fn seq_scan_multiple_rows() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Insert multiple rows
@@ -397,7 +384,7 @@ mod tests {
 
     #[test]
     fn seq_scan_open_resets_state() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Insert rows
@@ -457,7 +444,7 @@ mod tests {
 
     #[test]
     fn seq_scan_close_succeeds() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let mut scan = SeqScanExec::new(table_id, vec!["id".into()]);
@@ -468,7 +455,7 @@ mod tests {
 
     #[test]
     fn index_scan_delegates_to_seq_scan() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Insert rows
@@ -539,7 +526,7 @@ mod tests {
 
     #[test]
     fn index_scan_open_succeeds() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let mut scan = IndexScanExec::builder()
@@ -558,7 +545,7 @@ mod tests {
 
     #[test]
     fn index_scan_close_succeeds() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let mut scan = IndexScanExec::builder()
@@ -577,7 +564,7 @@ mod tests {
 
     #[test]
     fn index_scan_with_range_predicate() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Insert rows
@@ -646,7 +633,7 @@ mod tests {
 
     #[test]
     fn seq_scan_unknown_table_returns_error() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(999); // Non-existent table
 
         let mut scan = SeqScanExec::new(table_id, vec!["id".into()]);
@@ -666,7 +653,7 @@ mod tests {
 
     #[test]
     fn index_scan_empty_table() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let mut scan = IndexScanExec::builder()
@@ -686,7 +673,7 @@ mod tests {
 
     #[test]
     fn index_scan_open_resets_state() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Insert rows
@@ -753,7 +740,7 @@ mod tests {
 
     #[test]
     fn seq_scan_single_column_table() {
-        let (_ctx, _temp) = setup_context();
+        let (_ctx, _temp) = setup_test_context();
 
         // Create table with single column
         let temp_dir = tempfile::tempdir().unwrap();

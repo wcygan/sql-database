@@ -124,7 +124,7 @@ fn compare_rows(a: &Row, b: &Row, sort_keys: &[SortKey]) -> Ordering {
 
         let ordering = match (val_a, val_b) {
             (None, None) => Ordering::Equal,
-            (None, Some(_)) => Ordering::Less,    // NULL sorts before non-NULL
+            (None, Some(_)) => Ordering::Less, // NULL sorts before non-NULL
             (Some(_), None) => Ordering::Greater, // non-NULL sorts after NULL
             (Some(a_val), Some(b_val)) => compare_values(a_val, b_val),
         };
@@ -176,24 +176,13 @@ fn compare_values(a: &Value, b: &Value) -> Ordering {
 mod tests {
     use super::*;
     use crate::tests::helpers::{
-        assert_exhausted, assert_next_row, create_test_catalog, MockExecutor,
+        assert_exhausted, assert_next_row, setup_test_context, MockExecutor,
     };
-    use buffer::FilePager;
     use planner::SortDirection;
-    use wal::Wal;
-
-    fn create_test_context() -> ExecutionContext<'static> {
-        let catalog = Box::leak(Box::new(create_test_catalog()));
-        let temp_dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
-        let pager = Box::leak(Box::new(FilePager::new(temp_dir.path(), 10)));
-        let wal = Box::leak(Box::new(Wal::open(temp_dir.path().join("test.wal")).unwrap()));
-
-        ExecutionContext::new(catalog, pager, wal, temp_dir.path().into())
-    }
 
     #[test]
     fn sort_single_column_ascending() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         // Input: rows with Int values in random order
         let rows = vec![
@@ -222,7 +211,7 @@ mod tests {
 
     #[test]
     fn sort_single_column_descending() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let rows = vec![
             Row::new(vec![Value::Int(1)]),
@@ -249,7 +238,7 @@ mod tests {
 
     #[test]
     fn sort_multiple_columns() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         // Sort by first column ASC, then second column DESC
         let rows = vec![
@@ -306,7 +295,7 @@ mod tests {
 
     #[test]
     fn sort_with_null_values() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         // NULLs should sort before non-NULL values
         let rows = vec![
@@ -337,7 +326,7 @@ mod tests {
 
     #[test]
     fn sort_text_lexicographic() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let rows = vec![
             Row::new(vec![Value::Text("zebra".to_string())]),
@@ -376,7 +365,7 @@ mod tests {
 
     #[test]
     fn sort_empty_input() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let input = Box::new(MockExecutor::new(vec![], vec!["value".to_string()]));
         let sort_keys = vec![SortKey {
@@ -392,7 +381,7 @@ mod tests {
 
     #[test]
     fn sort_single_row() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let rows = vec![Row::new(vec![Value::Int(42)])];
         let input = Box::new(MockExecutor::new(rows, vec!["value".to_string()]));
@@ -410,7 +399,7 @@ mod tests {
 
     #[test]
     fn sort_schema_delegation() {
-        let ctx = create_test_context();
+        let (ctx, _temp) = setup_test_context();
 
         let input = Box::new(MockExecutor::new(
             vec![],
@@ -428,7 +417,7 @@ mod tests {
 
     #[test]
     fn sort_stable_sort_preserves_order() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         // Multiple rows with same sort key value should maintain insertion order
         let rows = vec![
@@ -472,7 +461,7 @@ mod tests {
 
     #[test]
     fn sort_stats_tracking() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let rows = vec![
             Row::new(vec![Value::Int(3)]),
@@ -502,7 +491,7 @@ mod tests {
 
     #[test]
     fn sort_open_resets_state() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let rows = vec![Row::new(vec![Value::Int(1)])];
         let input = Box::new(MockExecutor::new(rows, vec!["value".to_string()]));

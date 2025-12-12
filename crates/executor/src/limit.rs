@@ -103,24 +103,13 @@ impl Executor for LimitExec {
 mod tests {
     use super::*;
     use crate::tests::helpers::{
-        assert_exhausted, assert_next_row, create_test_catalog, MockExecutor,
+        assert_exhausted, assert_next_row, setup_test_context, MockExecutor,
     };
-    use buffer::FilePager;
     use types::Value;
-    use wal::Wal;
-
-    fn create_test_context() -> ExecutionContext<'static> {
-        let catalog = Box::leak(Box::new(create_test_catalog()));
-        let temp_dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
-        let pager = Box::leak(Box::new(FilePager::new(temp_dir.path(), 10)));
-        let wal = Box::leak(Box::new(Wal::open(temp_dir.path().join("test.wal")).unwrap()));
-
-        ExecutionContext::new(catalog, pager, wal, temp_dir.path().into())
-    }
 
     #[test]
     fn limit_only() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let rows = vec![
             Row::new(vec![Value::Int(1)]),
@@ -144,7 +133,7 @@ mod tests {
 
     #[test]
     fn offset_only() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let rows = vec![
             Row::new(vec![Value::Int(1)]),
@@ -167,7 +156,7 @@ mod tests {
 
     #[test]
     fn limit_and_offset() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let rows = vec![
             Row::new(vec![Value::Int(1)]),
@@ -191,12 +180,9 @@ mod tests {
 
     #[test]
     fn offset_beyond_total_rows() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
-        let rows = vec![
-            Row::new(vec![Value::Int(1)]),
-            Row::new(vec![Value::Int(2)]),
-        ];
+        let rows = vec![Row::new(vec![Value::Int(1)]), Row::new(vec![Value::Int(2)])];
         let input = Box::new(MockExecutor::new(rows, vec!["value".to_string()]));
         let mut limit_exec = LimitExec::new(input, None, Some(10));
 
@@ -207,12 +193,9 @@ mod tests {
 
     #[test]
     fn limit_larger_than_total_rows() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
-        let rows = vec![
-            Row::new(vec![Value::Int(1)]),
-            Row::new(vec![Value::Int(2)]),
-        ];
+        let rows = vec![Row::new(vec![Value::Int(1)]), Row::new(vec![Value::Int(2)])];
         let input = Box::new(MockExecutor::new(rows, vec!["value".to_string()]));
         let mut limit_exec = LimitExec::new(input, Some(100), None);
 
@@ -228,12 +211,9 @@ mod tests {
 
     #[test]
     fn limit_zero() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
-        let rows = vec![
-            Row::new(vec![Value::Int(1)]),
-            Row::new(vec![Value::Int(2)]),
-        ];
+        let rows = vec![Row::new(vec![Value::Int(1)]), Row::new(vec![Value::Int(2)])];
         let input = Box::new(MockExecutor::new(rows, vec!["value".to_string()]));
         let mut limit_exec = LimitExec::new(input, Some(0), None);
 
@@ -244,7 +224,7 @@ mod tests {
 
     #[test]
     fn empty_input() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let input = Box::new(MockExecutor::new(vec![], vec!["value".to_string()]));
         let mut limit_exec = LimitExec::new(input, Some(5), Some(2));
@@ -256,7 +236,7 @@ mod tests {
 
     #[test]
     fn schema_delegation() {
-        let ctx = create_test_context();
+        let (ctx, _temp) = setup_test_context();
 
         let input = Box::new(MockExecutor::new(
             vec![],
@@ -270,7 +250,7 @@ mod tests {
 
     #[test]
     fn limit_one() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let rows = vec![
             Row::new(vec![Value::Int(1)]),
@@ -288,12 +268,9 @@ mod tests {
 
     #[test]
     fn offset_one() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
-        let rows = vec![
-            Row::new(vec![Value::Int(1)]),
-            Row::new(vec![Value::Int(2)]),
-        ];
+        let rows = vec![Row::new(vec![Value::Int(1)]), Row::new(vec![Value::Int(2)])];
         let input = Box::new(MockExecutor::new(rows, vec!["value".to_string()]));
         let mut limit_exec = LimitExec::new(input, None, Some(1));
 
@@ -305,7 +282,7 @@ mod tests {
 
     #[test]
     fn stats_tracking() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let rows = vec![
             Row::new(vec![Value::Int(1)]),
@@ -331,7 +308,7 @@ mod tests {
 
     #[test]
     fn open_resets_state() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let rows = vec![
             Row::new(vec![Value::Int(1)]),
@@ -362,7 +339,7 @@ mod tests {
 
     #[test]
     fn pagination_scenario() {
-        let mut ctx = create_test_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         // Simulate pagination: page size 2, get page 2 (skip 2, take 2)
         let rows = vec![

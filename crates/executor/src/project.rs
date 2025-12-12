@@ -95,23 +95,10 @@ impl Executor for ProjectExec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::helpers::*;
+    use crate::tests::helpers::{
+        assert_error_contains, assert_exhausted, assert_next_row, setup_test_context, MockExecutor,
+    };
     use types::Value;
-
-    fn setup_context() -> (ExecutionContext<'static>, tempfile::TempDir) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let catalog = create_test_catalog();
-
-        // Leak resources for 'static lifetime (test-only pattern)
-        let catalog = Box::leak(Box::new(catalog));
-        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
-        let wal = Box::leak(Box::new(
-            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
-        ));
-
-        let ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
-        (ctx, temp_dir)
-    }
 
     #[test]
     fn project_single_column() {
@@ -136,7 +123,7 @@ mod tests {
         let projections = vec![("name".to_string(), 1)];
         let mut project = ProjectExec::new(input, projections);
 
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         project.open(&mut ctx).unwrap();
 
@@ -172,7 +159,7 @@ mod tests {
         let projections = vec![("id".to_string(), 0), ("active".to_string(), 2)];
         let mut project = ProjectExec::new(input, projections);
 
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         project.open(&mut ctx).unwrap();
         assert_next_row(
@@ -205,7 +192,7 @@ mod tests {
         ];
         let mut project = ProjectExec::new(input, projections);
 
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         project.open(&mut ctx).unwrap();
         assert_next_row(
@@ -231,7 +218,7 @@ mod tests {
         let projections = vec![("id1".to_string(), 0), ("id2".to_string(), 0)];
         let mut project = ProjectExec::new(input, projections);
 
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         project.open(&mut ctx).unwrap();
         assert_next_row(
@@ -250,7 +237,7 @@ mod tests {
         let projections = vec![("id".to_string(), 0)];
         let mut project = ProjectExec::new(input, projections);
 
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         project.open(&mut ctx).unwrap();
         assert_exhausted(&mut project, &mut ctx);
@@ -266,7 +253,7 @@ mod tests {
         let projections = vec![("nonexistent".to_string(), 5)];
         let mut project = ProjectExec::new(input, projections);
 
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         project.open(&mut ctx).unwrap();
         assert_error_contains(project.next(&mut ctx), "out of bounds");
@@ -280,7 +267,7 @@ mod tests {
         let projections = vec![("id".to_string(), 0)];
         let mut project = ProjectExec::new(input, projections);
 
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         project.open(&mut ctx).unwrap();
         assert_next_row(&mut project, &mut ctx, Row::new(vec![Value::Int(100)]));
@@ -304,7 +291,7 @@ mod tests {
         let projections = vec![("active".to_string(), 2)];
         let mut project = ProjectExec::new(input, projections);
 
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         project.open(&mut ctx).unwrap();
         assert_next_row(&mut project, &mut ctx, Row::new(vec![Value::Bool(true)]));
@@ -321,7 +308,7 @@ mod tests {
         let projections = vec![("id".to_string(), 0)];
         let mut project = ProjectExec::new(input, projections);
 
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         // Open should succeed
         assert!(project.open(&mut ctx).is_ok());
@@ -335,7 +322,7 @@ mod tests {
         let projections = vec![("id".to_string(), 0)];
         let mut project = ProjectExec::new(input, projections);
 
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         project.open(&mut ctx).unwrap();
         assert!(project.close(&mut ctx).is_ok());
@@ -350,7 +337,7 @@ mod tests {
         let projections = vec![("id".to_string(), 0)];
         let mut project = ProjectExec::new(input, projections);
 
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         project.open(&mut ctx).unwrap();
         assert_error_contains(project.next(&mut ctx), "test error");

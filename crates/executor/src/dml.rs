@@ -373,7 +373,7 @@ impl Executor for DeleteExec {
 mod tests {
     use super::*;
     use crate::tests::helpers::{
-        assert_error_contains, assert_exhausted, assert_next_row, create_test_catalog, MockExecutor,
+        assert_error_contains, assert_exhausted, assert_next_row, setup_test_context, MockExecutor,
     };
     use crate::{execute_dml, execute_query};
     use expr::BinaryOp;
@@ -381,26 +381,11 @@ mod tests {
     use testsupport::prelude::*;
     use types::Value;
 
-    fn setup_context() -> (ExecutionContext<'static>, tempfile::TempDir) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let catalog = create_test_catalog();
-
-        // Leak resources for 'static lifetime (test-only pattern)
-        let catalog = Box::leak(Box::new(catalog));
-        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
-        let wal = Box::leak(Box::new(
-            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
-        ));
-
-        let ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
-        (ctx, temp_dir)
-    }
-
     // InsertExec tests
 
     #[test]
     fn insert_single_row() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let values = vec![
@@ -421,7 +406,7 @@ mod tests {
 
     #[test]
     fn insert_only_executes_once() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let values = vec![lit!(int: 42)];
@@ -441,7 +426,7 @@ mod tests {
 
     #[test]
     fn insert_open_resets_executed_flag() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let values = vec![lit!(int: 1)];
@@ -460,7 +445,7 @@ mod tests {
 
     #[test]
     fn insert_evaluates_literal_expressions() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let values = vec![
@@ -485,7 +470,7 @@ mod tests {
 
     #[test]
     fn insert_close_succeeds() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let mut insert = InsertExec::new(table_id, vec![], vec![lit_int(1)]);
@@ -496,7 +481,7 @@ mod tests {
 
     #[test]
     fn insert_multiple_values() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let values = vec![
@@ -514,7 +499,7 @@ mod tests {
 
     #[test]
     fn insert_with_expression() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Use binary expression (though it doesn't have row context)
@@ -533,7 +518,7 @@ mod tests {
 
     #[test]
     fn update_no_matching_rows() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Empty input
@@ -556,7 +541,7 @@ mod tests {
 
     #[test]
     fn update_single_row() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let rows = vec![Row::new(vec![Value::Int(1), Value::Text("alice".into())])];
@@ -579,7 +564,7 @@ mod tests {
 
     #[test]
     fn update_multiple_rows() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let rows = vec![
@@ -606,7 +591,7 @@ mod tests {
 
     #[test]
     fn update_multiple_columns() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let rows = vec![Row::new(vec![Value::Int(1), Value::Text("alice".into())])];
@@ -628,7 +613,7 @@ mod tests {
 
     #[test]
     fn update_assignment_out_of_bounds() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let rows = vec![Row::new(vec![Value::Int(1)])];
@@ -648,7 +633,7 @@ mod tests {
 
     #[test]
     fn update_only_executes_once() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let rows = vec![Row::new(vec![Value::Int(1)])];
@@ -672,7 +657,7 @@ mod tests {
 
     #[test]
     fn update_open_resets_executed_flag() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let rows = vec![Row::new(vec![Value::Int(1)])];
@@ -712,7 +697,7 @@ mod tests {
 
     #[test]
     fn update_delegates_open_to_input() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let input = Box::new(MockExecutor::new(vec![], vec![]));
@@ -728,7 +713,7 @@ mod tests {
 
     #[test]
     fn update_delegates_close_to_input() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let input = Box::new(MockExecutor::new(vec![], vec![]));
@@ -745,7 +730,7 @@ mod tests {
 
     #[test]
     fn update_propagates_input_error() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let input = Box::new(MockExecutor::with_next_error(common::DbError::Executor(
@@ -766,7 +751,7 @@ mod tests {
 
     #[test]
     fn delete_no_matching_rows() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let input = Box::new(MockExecutor::new(vec![], vec![]));
@@ -781,7 +766,7 @@ mod tests {
 
     #[test]
     fn delete_single_row() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let rows = vec![Row::new(vec![Value::Int(1), Value::Text("alice".into())])];
@@ -797,7 +782,7 @@ mod tests {
 
     #[test]
     fn delete_multiple_rows() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let rows = vec![
@@ -817,7 +802,7 @@ mod tests {
 
     #[test]
     fn delete_only_executes_once() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let rows = vec![Row::new(vec![Value::Int(1)])];
@@ -834,7 +819,7 @@ mod tests {
 
     #[test]
     fn delete_open_resets_executed_flag() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let rows = vec![Row::new(vec![Value::Int(1)])];
@@ -862,7 +847,7 @@ mod tests {
 
     #[test]
     fn delete_delegates_open_to_input() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let input = Box::new(MockExecutor::new(vec![], vec![]));
@@ -873,7 +858,7 @@ mod tests {
 
     #[test]
     fn delete_delegates_close_to_input() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let input = Box::new(MockExecutor::new(vec![], vec![]));
@@ -885,7 +870,7 @@ mod tests {
 
     #[test]
     fn delete_propagates_input_error() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let input = Box::new(MockExecutor::with_next_error(common::DbError::Executor(
@@ -899,7 +884,7 @@ mod tests {
 
     #[test]
     fn update_exec_persists_changes_and_wal() {
-        let (mut ctx, temp) = setup_context();
+        let (mut ctx, temp) = setup_test_context();
         let table_id = TableId(1);
 
         for (id, name) in &[(1, "Ada"), (2, "Bob")] {
@@ -942,7 +927,7 @@ mod tests {
 
     #[test]
     fn delete_exec_removes_rows_and_wal() {
-        let (mut ctx, temp) = setup_context();
+        let (mut ctx, temp) = setup_test_context();
         let table_id = TableId(1);
 
         for (id, name, active) in &[(1, "Ada", true), (2, "Bob", false)] {

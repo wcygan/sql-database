@@ -46,24 +46,10 @@ mod tests {
     pub mod helpers;
 
     use super::*;
-    use helpers::create_test_catalog;
+    use helpers::setup_test_context;
     use planner::{PhysicalPlan, ResolvedExpr};
     use testsupport::prelude::*;
     use types::Value;
-
-    fn setup_context() -> (ExecutionContext<'static>, tempfile::TempDir) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let catalog = create_test_catalog();
-
-        let catalog = Box::leak(Box::new(catalog));
-        let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
-        let wal = Box::leak(Box::new(
-            wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
-        ));
-
-        let ctx = ExecutionContext::new(catalog, pager, wal, temp_dir.path().into());
-        (ctx, temp_dir)
-    }
 
     fn insert_test_rows(
         ctx: &mut ExecutionContext,
@@ -85,7 +71,7 @@ mod tests {
 
     #[test]
     fn execute_query_seq_scan_empty_table() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let plan = PhysicalPlan::SeqScan {
             table_id: TableId(1),
@@ -98,7 +84,7 @@ mod tests {
 
     #[test]
     fn execute_query_seq_scan_with_rows() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Insert test data
@@ -139,7 +125,7 @@ mod tests {
 
     #[test]
     fn execute_query_with_filter() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Insert test data
@@ -178,7 +164,7 @@ mod tests {
 
     #[test]
     fn execute_query_with_project() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Insert test data
@@ -206,7 +192,7 @@ mod tests {
 
     #[test]
     fn execute_query_with_filter_and_project() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Insert test data
@@ -260,7 +246,7 @@ mod tests {
 
     #[test]
     fn execute_dml_insert_single_row() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let plan = PhysicalPlan::Insert {
             table_id: TableId(1),
@@ -277,7 +263,7 @@ mod tests {
 
     #[test]
     fn execute_dml_update_returns_count() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Insert test data
@@ -307,7 +293,7 @@ mod tests {
 
     #[test]
     fn execute_dml_delete_returns_count() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Insert test data
@@ -341,7 +327,7 @@ mod tests {
 
     #[test]
     fn execute_dml_returns_error_when_result_is_not_int() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         // Create a plan that would return non-integer (this is contrived)
         // In practice, DML operators always return Int, but we test the error path
@@ -364,7 +350,7 @@ mod tests {
 
     #[test]
     fn execution_context_opens_heap_table() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         let result = ctx.heap_table(table_id);
@@ -373,7 +359,7 @@ mod tests {
 
     #[test]
     fn execution_context_logs_dml() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let record = wal::WalRecord::Insert {
             table: TableId(1),
@@ -390,7 +376,7 @@ mod tests {
 
     #[test]
     fn execute_query_returns_error_for_unknown_table() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let plan = PhysicalPlan::SeqScan {
             table_id: TableId(999),
@@ -403,7 +389,7 @@ mod tests {
 
     #[test]
     fn execute_dml_returns_error_for_unknown_table() {
-        let (mut ctx, _temp) = setup_context();
+        let (mut ctx, _temp) = setup_test_context();
 
         let plan = PhysicalPlan::Insert {
             table_id: TableId(999),
