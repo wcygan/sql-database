@@ -38,18 +38,7 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
             table_name,
             columns,
             ..
-        } => {
-            let index_name = name
-                .ok_or_else(|| DbError::Parser("index name required".into()))
-                .map(|n| normalize_object_name(&n))??;
-            let table = normalize_object_name(&table_name)?;
-            let column = map_index_column(columns.first())?;
-            Ok(Statement::CreateIndex {
-                name: index_name,
-                table,
-                column,
-            })
-        }
+        } => map_create_index(name, table_name, columns),
         SqlStatement::Insert {
             table_name, source, ..
         } => {
@@ -144,6 +133,24 @@ fn map_drop(
             "unsupported DROP type: {object_type:?}"
         ))),
     }
+}
+
+fn map_create_index(
+    name: Option<sqlast::ObjectName>,
+    table_name: sqlast::ObjectName,
+    columns: Vec<sqlast::OrderByExpr>,
+) -> DbResult<Statement> {
+    let index_name = name
+        .ok_or_else(|| DbError::Parser("index name required".into()))
+        .map(|n| normalize_object_name(&n))??;
+    let table = normalize_object_name(&table_name)?;
+    let column = map_index_column(columns.first())?;
+
+    Ok(Statement::CreateIndex {
+        name: index_name,
+        table,
+        column,
+    })
 }
 
 fn map_select(query: sqlast::Query) -> DbResult<Statement> {
