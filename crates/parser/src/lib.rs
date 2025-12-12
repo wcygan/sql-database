@@ -32,17 +32,7 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
         } => map_create_table(name, columns, constraints),
         SqlStatement::Drop {
             object_type, names, ..
-        } => match object_type {
-            sqlast::ObjectType::Table => Ok(Statement::DropTable {
-                name: first_name(names)?,
-            }),
-            sqlast::ObjectType::Index => Ok(Statement::DropIndex {
-                name: first_name(names)?,
-            }),
-            _ => Err(DbError::Parser(format!(
-                "unsupported DROP type: {object_type:?}"
-            ))),
-        },
+        } => map_drop(object_type, names),
         SqlStatement::CreateIndex {
             name,
             table_name,
@@ -137,6 +127,23 @@ fn map_create_table(
         columns: mapped_columns,
         primary_key,
     })
+}
+
+fn map_drop(
+    object_type: sqlast::ObjectType,
+    names: Vec<sqlast::ObjectName>,
+) -> DbResult<Statement> {
+    match object_type {
+        sqlast::ObjectType::Table => Ok(Statement::DropTable {
+            name: first_name(names)?,
+        }),
+        sqlast::ObjectType::Index => Ok(Statement::DropIndex {
+            name: first_name(names)?,
+        }),
+        _ => Err(DbError::Parser(format!(
+            "unsupported DROP type: {object_type:?}"
+        ))),
+    }
 }
 
 fn map_select(query: sqlast::Query) -> DbResult<Statement> {
