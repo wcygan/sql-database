@@ -41,12 +41,7 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
         } => map_create_index(name, table_name, columns),
         SqlStatement::Insert {
             table_name, source, ..
-        } => {
-            let table = normalize_object_name(&table_name)?;
-            let source = source.ok_or_else(|| DbError::Parser("INSERT source missing".into()))?;
-            let values = extract_values(*source)?;
-            Ok(Statement::Insert { table, values })
-        }
+        } => map_insert(table_name, source),
         SqlStatement::Query(query) => map_select(*query),
         SqlStatement::Update {
             table,
@@ -151,6 +146,17 @@ fn map_create_index(
         table,
         column,
     })
+}
+
+fn map_insert(
+    table_name: sqlast::ObjectName,
+    source: Option<Box<sqlast::Query>>,
+) -> DbResult<Statement> {
+    let table = normalize_object_name(&table_name)?;
+    let source = source.ok_or_else(|| DbError::Parser("INSERT source missing".into()))?;
+    let values = extract_values(*source)?;
+
+    Ok(Statement::Insert { table, values })
 }
 
 fn map_select(query: sqlast::Query) -> DbResult<Statement> {
