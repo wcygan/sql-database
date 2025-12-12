@@ -51,17 +51,7 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
         } => map_update(table, assignments, selection),
         SqlStatement::Delete {
             from, selection, ..
-        } => {
-            if from.is_empty() {
-                return Err(DbError::Parser("DELETE requires FROM source".into()));
-            }
-            let table = table_name_from_with_joins(&from[0])?;
-            if from.len() > 1 {
-                return Err(DbError::Parser("multi-table DELETE not supported".into()));
-            }
-            let selection = selection.map(map_expr).transpose()?;
-            Ok(Statement::Delete { table, selection })
-        }
+        } => map_delete(from, selection),
         SqlStatement::Explain {
             statement, analyze, ..
         } => {
@@ -164,6 +154,22 @@ fn map_update(
         assignments,
         selection,
     })
+}
+
+fn map_delete(
+    from: Vec<sqlast::TableWithJoins>,
+    selection: Option<sqlast::Expr>,
+) -> DbResult<Statement> {
+    if from.is_empty() {
+        return Err(DbError::Parser("DELETE requires FROM source".into()));
+    }
+    let table = table_name_from_with_joins(&from[0])?;
+    if from.len() > 1 {
+        return Err(DbError::Parser("multi-table DELETE not supported".into()));
+    }
+    let selection = selection.map(map_expr).transpose()?;
+
+    Ok(Statement::Delete { table, selection })
 }
 
 fn map_select(query: sqlast::Query) -> DbResult<Statement> {
