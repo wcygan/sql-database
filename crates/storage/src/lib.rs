@@ -214,6 +214,22 @@ impl HeapFile {
         }
         Ok(())
     }
+
+    /// Validate a RecordId and return the page and slot.
+    /// Returns error if page doesn't exist, slot is out of bounds, or slot is empty.
+    fn validate_and_read_slot(&mut self, rid: RecordId) -> DbResult<(Page, Slot)> {
+        self.ensure_page_exists(rid.page_id.0)?;
+        let page = self.read_page(rid.page_id.0)?;
+        let header = page.header()?;
+        if rid.slot >= header.num_slots {
+            return Err(DbError::Storage(format!("invalid slot {}", rid.slot)));
+        }
+        let slot = page.read_slot(rid.slot)?;
+        if slot.is_empty() {
+            return Err(DbError::Storage("slot empty".into()));
+        }
+        Ok((page, slot))
+    }
 }
 
 impl HeapTable for HeapFile {
@@ -240,16 +256,7 @@ impl HeapTable for HeapFile {
     }
 
     fn get(&mut self, rid: RecordId) -> DbResult<Row> {
-        self.ensure_page_exists(rid.page_id.0)?;
-        let page = self.read_page(rid.page_id.0)?;
-        let header = page.header()?;
-        if rid.slot >= header.num_slots {
-            return Err(DbError::Storage(format!("invalid slot {}", rid.slot)));
-        }
-        let slot = page.read_slot(rid.slot)?;
-        if slot.is_empty() {
-            return Err(DbError::Storage("slot empty".into()));
-        }
+        let (page, slot) = self.validate_and_read_slot(rid)?;
         let start = slot.offset as usize;
         let end = start + slot.len as usize;
         let (mut row, _): (Row, usize) =
@@ -260,17 +267,7 @@ impl HeapTable for HeapFile {
     }
 
     fn update(&mut self, rid: RecordId, row: &Row) -> DbResult<RecordId> {
-        self.ensure_page_exists(rid.page_id.0)?;
-        let mut page = self.read_page(rid.page_id.0)?;
-        let header = page.header()?;
-        if rid.slot >= header.num_slots {
-            return Err(DbError::Storage(format!("invalid slot {}", rid.slot)));
-        }
-
-        let mut slot = page.read_slot(rid.slot)?;
-        if slot.is_empty() {
-            return Err(DbError::Storage("slot empty".into()));
-        }
+        let (mut page, mut slot) = self.validate_and_read_slot(rid)?;
 
         let bytes = encode_to_vec(row, bincode_config())
             .map_err(|e| DbError::Storage(format!("serialize row failed: {e}")))?;
@@ -293,16 +290,7 @@ impl HeapTable for HeapFile {
     }
 
     fn delete(&mut self, rid: RecordId) -> DbResult<()> {
-        self.ensure_page_exists(rid.page_id.0)?;
-        let mut page = self.read_page(rid.page_id.0)?;
-        let header = page.header()?;
-        if rid.slot >= header.num_slots {
-            return Err(DbError::Storage(format!("invalid slot {}", rid.slot)));
-        }
-        let mut slot = page.read_slot(rid.slot)?;
-        if slot.is_empty() {
-            return Err(DbError::Storage("slot already empty".into()));
-        }
+        let (mut page, mut slot) = self.validate_and_read_slot(rid)?;
         slot.len = 0;
         page.write_slot(rid.slot, &slot)?;
         self.write_page(&page)?;

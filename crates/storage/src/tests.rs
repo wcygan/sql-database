@@ -200,3 +200,64 @@ fn delete_rejects_slots_past_header_bounds() {
     let err = table.delete(invalid).unwrap_err();
     assert!(matches!(err, DbError::Storage(msg) if msg.contains("invalid slot")));
 }
+
+#[test]
+fn validate_and_read_slot_rejects_missing_page() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("heap.tbl");
+    let mut table = HeapFile::open(&path, 1).unwrap();
+
+    let rid = RecordId {
+        page_id: PageId(0),
+        slot: 0,
+    };
+
+    let err = table.validate_and_read_slot(rid).unwrap_err();
+    assert!(matches!(err, DbError::Storage(msg) if msg.contains("not allocated")));
+}
+
+#[test]
+fn validate_and_read_slot_rejects_invalid_slot() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("heap.tbl");
+    let mut table = HeapFile::open(&path, 1).unwrap();
+
+    let row = Row::new(vec![Value::Int(42)]);
+    let rid = table.insert(&row).unwrap();
+
+    let invalid = RecordId {
+        page_id: rid.page_id,
+        slot: rid.slot + 100,
+    };
+
+    let err = table.validate_and_read_slot(invalid).unwrap_err();
+    assert!(matches!(err, DbError::Storage(msg) if msg.contains("invalid slot")));
+}
+
+#[test]
+fn validate_and_read_slot_rejects_empty_slot() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("heap.tbl");
+    let mut table = HeapFile::open(&path, 1).unwrap();
+
+    let row = Row::new(vec![Value::Int(99)]);
+    let rid = table.insert(&row).unwrap();
+    table.delete(rid).unwrap();
+
+    let err = table.validate_and_read_slot(rid).unwrap_err();
+    assert!(matches!(err, DbError::Storage(msg) if msg.contains("slot empty")));
+}
+
+#[test]
+fn validate_and_read_slot_returns_page_and_slot() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("heap.tbl");
+    let mut table = HeapFile::open(&path, 1).unwrap();
+
+    let row = Row::new(vec![Value::Int(77)]);
+    let rid = table.insert(&row).unwrap();
+
+    let (page, slot) = table.validate_and_read_slot(rid).unwrap();
+    assert_eq!(page.id, rid.page_id.0);
+    assert!(!slot.is_empty());
+}
