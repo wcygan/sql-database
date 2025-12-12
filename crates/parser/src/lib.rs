@@ -29,24 +29,7 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
             columns,
             constraints,
             ..
-        } => {
-            let table = normalize_object_name(&name)?;
-            let primary_key = resolve_primary_key(&columns, &constraints)?;
-
-            let mapped_columns = columns
-                .into_iter()
-                .map(|col| ColumnDef {
-                    name: normalize_ident_owned(col.name),
-                    ty: col.data_type.to_string().to_uppercase(),
-                })
-                .collect();
-
-            Ok(Statement::CreateTable {
-                name: table,
-                columns: mapped_columns,
-                primary_key,
-            })
-        }
+        } => map_create_table(name, columns, constraints),
         SqlStatement::Drop {
             object_type, names, ..
         } => match object_type {
@@ -131,6 +114,29 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
         }
         _ => Err(DbError::Parser("unsupported statement".into())),
     }
+}
+
+fn map_create_table(
+    name: sqlast::ObjectName,
+    columns: Vec<sqlast::ColumnDef>,
+    constraints: Vec<sqlast::TableConstraint>,
+) -> DbResult<Statement> {
+    let table = normalize_object_name(&name)?;
+    let primary_key = resolve_primary_key(&columns, &constraints)?;
+
+    let mapped_columns = columns
+        .into_iter()
+        .map(|col| ColumnDef {
+            name: normalize_ident_owned(col.name),
+            ty: col.data_type.to_string().to_uppercase(),
+        })
+        .collect();
+
+    Ok(Statement::CreateTable {
+        name: table,
+        columns: mapped_columns,
+        primary_key,
+    })
 }
 
 fn map_select(query: sqlast::Query) -> DbResult<Statement> {
