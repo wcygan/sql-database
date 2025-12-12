@@ -48,25 +48,7 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
             assignments,
             selection,
             ..
-        } => {
-            let table = table_name_from_with_joins(&table)?;
-            let assignments = assignments
-                .into_iter()
-                .map(|assign| {
-                    let ident = assign
-                        .id
-                        .last()
-                        .ok_or_else(|| DbError::Parser("invalid assignment target".into()))?;
-                    Ok((normalize_ident(ident), map_expr(assign.value)?))
-                })
-                .collect::<DbResult<Vec<_>>>()?;
-            let selection = selection.map(map_expr).transpose()?;
-            Ok(Statement::Update {
-                table,
-                assignments,
-                selection,
-            })
-        }
+        } => map_update(table, assignments, selection),
         SqlStatement::Delete {
             from, selection, ..
         } => {
@@ -157,6 +139,31 @@ fn map_insert(
     let values = extract_values(*source)?;
 
     Ok(Statement::Insert { table, values })
+}
+
+fn map_update(
+    table: sqlast::TableWithJoins,
+    assignments: Vec<sqlast::Assignment>,
+    selection: Option<sqlast::Expr>,
+) -> DbResult<Statement> {
+    let table = table_name_from_with_joins(&table)?;
+    let assignments = assignments
+        .into_iter()
+        .map(|assign| {
+            let ident = assign
+                .id
+                .last()
+                .ok_or_else(|| DbError::Parser("invalid assignment target".into()))?;
+            Ok((normalize_ident(ident), map_expr(assign.value)?))
+        })
+        .collect::<DbResult<Vec<_>>>()?;
+    let selection = selection.map(map_expr).transpose()?;
+
+    Ok(Statement::Update {
+        table,
+        assignments,
+        selection,
+    })
 }
 
 fn map_select(query: sqlast::Query) -> DbResult<Statement> {
