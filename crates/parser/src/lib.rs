@@ -54,10 +54,7 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
         } => map_delete(from, selection),
         SqlStatement::Explain {
             statement, analyze, ..
-        } => {
-            let query = Box::new(map_statement(*statement)?);
-            Ok(Statement::Explain { query, analyze })
-        }
+        } => map_explain(*statement, analyze),
         _ => Err(DbError::Parser("unsupported statement".into())),
     }
 }
@@ -170,6 +167,11 @@ fn map_delete(
     let selection = selection.map(map_expr).transpose()?;
 
     Ok(Statement::Delete { table, selection })
+}
+
+fn map_explain(statement: sqlast::Statement, analyze: bool) -> DbResult<Statement> {
+    let query = Box::new(map_statement(statement)?);
+    Ok(Statement::Explain { query, analyze })
 }
 
 fn map_select(query: sqlast::Query) -> DbResult<Statement> {
