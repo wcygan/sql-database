@@ -31,18 +31,7 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
             ..
         } => {
             let table = normalize_object_name(&name)?;
-            let inline_primary_key = extract_inline_primary_key(&columns)?;
-            let table_primary_key = extract_primary_key(&constraints)?;
-            let primary_key = match (table_primary_key, inline_primary_key) {
-                (Some(_), Some(_)) => {
-                    return Err(DbError::Parser(
-                        "PRIMARY KEY defined both inline and at table level".into(),
-                    ))
-                }
-                (Some(pk), None) => Some(pk),
-                (None, Some(pk)) => Some(pk),
-                (None, None) => None,
-            };
+            let primary_key = resolve_primary_key(&columns, &constraints)?;
 
             let mapped_columns = columns
                 .into_iter()
@@ -423,6 +412,24 @@ fn ensure_plain_wildcard(options: &sqlast::WildcardAdditionalOptions) -> DbResul
         Err(DbError::Parser("wildcard options not supported".into()))
     } else {
         Ok(())
+    }
+}
+
+/// Resolve primary key from inline column constraints and table-level constraints.
+/// Returns error if PK defined in both places.
+fn resolve_primary_key(
+    columns: &[sqlast::ColumnDef],
+    constraints: &[sqlast::TableConstraint],
+) -> DbResult<Option<Vec<String>>> {
+    let inline_pk = extract_inline_primary_key(columns)?;
+    let table_pk = extract_primary_key(constraints)?;
+
+    match (table_pk, inline_pk) {
+        (Some(_), Some(_)) => Err(DbError::Parser(
+            "PRIMARY KEY defined both inline and at table level".into(),
+        )),
+        (Some(pk), None) | (None, Some(pk)) => Ok(Some(pk)),
+        (None, None) => Ok(None),
     }
 }
 
