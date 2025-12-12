@@ -1,3 +1,4 @@
+use super::meta_commands::{MetaCommandResult, parse_command};
 use anyhow::Result;
 use common::RecordBatch;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -145,166 +146,30 @@ impl<'a> App<'a> {
     }
 
     fn handle_meta_command(&mut self, command: &str) -> Result<()> {
-        let parts: Vec<&str> = command.split_whitespace().collect();
-
-        match parts[0] {
-            ".help" => {
-                let help_text = vec![
-                    "Meta Commands:".to_string(),
-                    "  .help              Show this help".to_string(),
-                    "  .tables            List all tables".to_string(),
-                    "  .schema <table>    Show table schema".to_string(),
-                    "  .examples          Show SQL examples".to_string(),
-                    "  .reset             Reset database (clear all data)".to_string(),
-                    "".to_string(),
-                    "Keyboard Shortcuts:".to_string(),
-                    "  Enter              Execute SQL or meta command".to_string(),
-                    "  Ctrl+C             Clear editor and results".to_string(),
-                    "  Ctrl+Q             Quit application".to_string(),
-                    "".to_string(),
-                    "SQL Support:".to_string(),
-                    "  DDL: CREATE TABLE, DROP TABLE, CREATE INDEX, DROP INDEX".to_string(),
-                    "  DML: INSERT, SELECT, UPDATE, DELETE".to_string(),
-                    "  Types: INT, TEXT, BOOL".to_string(),
-                ];
-
-                self.results = Some(RecordBatch {
-                    columns: vec!["Help".to_string()],
-                    rows: help_text
-                        .into_iter()
-                        .map(|line| common::Row::new(vec![types::Value::Text(line)]))
-                        .collect(),
-                });
-                self.status_message = Some("Help displayed".to_string());
-                self.execution_time = None;
-            }
-            ".tables" => {
-                let catalog = self.db.catalog();
-                let catalog_lock = catalog.blocking_read();
-                let summaries = catalog_lock.table_summaries();
-                if summaries.is_empty() {
-                    self.results = None;
-                    self.status_message = Some("No tables found".to_string());
-                } else {
-                    let rows: Vec<common::Row> = summaries
-                        .into_iter()
-                        .map(|s| {
-                            common::Row::new(vec![
-                                types::Value::Int(s.id.0 as i64),
-                                types::Value::Text(s.name),
-                                types::Value::Int(s.column_count as i64),
-                                types::Value::Int(s.index_count as i64),
-                            ])
-                        })
-                        .collect();
-
-                    self.results = Some(RecordBatch {
-                        columns: vec![
-                            "ID".to_string(),
-                            "Name".to_string(),
-                            "Columns".to_string(),
-                            "Indexes".to_string(),
-                        ],
-                        rows,
-                    });
-                    self.status_message = Some(format!(
-                        "{} table(s) found",
-                        self.results.as_ref().unwrap().rows.len()
-                    ));
-                }
-                self.execution_time = None;
-            }
-            ".schema" => {
-                if parts.len() < 2 {
-                    self.results = None;
-                    self.status_message = Some("Usage: .schema <table>".to_string());
-                } else {
-                    let table_name = parts[1];
-                    let catalog = self.db.catalog();
-                    let catalog_lock = catalog.blocking_read();
-                    match catalog_lock.table(table_name) {
-                        Ok(table) => {
-                            let rows: Vec<common::Row> = table
-                                .schema
-                                .columns()
-                                .iter()
-                                .map(|col| {
-                                    common::Row::new(vec![
-                                        types::Value::Text(col.name.clone()),
-                                        types::Value::Text(format!("{:?}", col.ty)),
-                                    ])
-                                })
-                                .collect();
-
-                            self.results = Some(RecordBatch {
-                                columns: vec!["Column".to_string(), "Type".to_string()],
-                                rows,
-                            });
-                            self.status_message =
-                                Some(format!("Schema for table '{}'", table_name));
-                        }
-                        Err(e) => {
-                            self.results = None;
-                            self.status_message = Some(format!("Error: {}", e));
-                        }
-                    }
-                }
-                self.execution_time = None;
-            }
-            ".reset" => {
-                match self.runtime_handle.block_on(self.db.reset()) {
-                    Ok(()) => {
-                        self.results = None;
-                        self.status_message =
-                            Some("Database reset complete. All data cleared.".to_string());
-                    }
-                    Err(e) => {
-                        self.results = None;
-                        self.status_message = Some(format!("Error resetting database: {}", e));
-                    }
-                }
-                self.execution_time = None;
-            }
-            ".examples" => {
-                let examples = vec![
-                    "SQL Examples".to_string(),
-                    "".to_string(),
-                    "DDL - Data Definition Language:".to_string(),
-                    "  CREATE TABLE users (id INT, name TEXT, active BOOL);".to_string(),
-                    "  CREATE TABLE products (id INT, name TEXT, PRIMARY KEY (id));".to_string(),
-                    "  DROP TABLE users;".to_string(),
-                    "  CREATE INDEX idx_name ON users (name);".to_string(),
-                    "  DROP INDEX idx_name;".to_string(),
-                    "".to_string(),
-                    "DML - Data Manipulation Language:".to_string(),
-                    "  INSERT INTO users VALUES (1, 'Alice', true);".to_string(),
-                    "  INSERT INTO users VALUES (2, 'Bob', false);".to_string(),
-                    "  SELECT * FROM users;".to_string(),
-                    "  SELECT id, name FROM users WHERE active = true;".to_string(),
-                    "  UPDATE users SET active = false WHERE id = 1;".to_string(),
-                    "  DELETE FROM users WHERE id = 2;".to_string(),
-                    "".to_string(),
-                    "Query Analysis:".to_string(),
-                    "  EXPLAIN SELECT * FROM users;".to_string(),
-                    "  EXPLAIN ANALYZE SELECT * FROM users WHERE active = true;".to_string(),
-                    "".to_string(),
-                    "Supported Types:".to_string(),
-                    "  INT, TEXT, BOOL".to_string(),
-                ];
-
-                self.results = Some(RecordBatch {
-                    columns: vec!["Examples".to_string()],
-                    rows: examples
-                        .into_iter()
-                        .map(|line| common::Row::new(vec![types::Value::Text(line)]))
-                        .collect(),
-                });
-                self.status_message = Some("SQL examples displayed".to_string());
-                self.execution_time = None;
-            }
-            _ => {
+        let cmd = match parse_command(command) {
+            Ok(c) => c,
+            Err(e) => {
                 self.results = None;
-                self.status_message = Some(format!("Unknown command: {}. Try .help", parts[0]));
+                self.status_message = Some(e);
+                self.execution_time = None;
+                return Ok(());
+            }
+        };
+
+        match cmd.execute(&self.db, &self.runtime_handle) {
+            MetaCommandResult::Results { batch, status } => {
+                self.results = Some(batch);
+                self.status_message = Some(status);
+                self.execution_time = None;
+            }
+            MetaCommandResult::Message(msg) => {
+                self.results = None;
+                self.status_message = Some(msg);
+                self.execution_time = None;
+            }
+            MetaCommandResult::Error(err) => {
+                self.results = None;
+                self.status_message = Some(format!("Error: {}", err));
                 self.execution_time = None;
             }
         }
