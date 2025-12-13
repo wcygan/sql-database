@@ -2,12 +2,33 @@
 //!
 //! Accepts client connections and executes SQL statements remotely using the
 //! wire protocol defined in the `protocol` crate.
+//!
+//! # Raft Cluster Mode
+//!
+//! The server supports distributed consensus via Raft. To run a 3-node cluster:
+//!
+//! ```bash
+//! # Terminal 1 - Node 1 (leader bootstrap)
+//! cargo run -p server -- --node-id 1 --raft-addr 127.0.0.1:6001 \
+//!     --peer 2,127.0.0.1:6002 --peer 3,127.0.0.1:6003 \
+//!     --data-dir ./node1 --port 5001
+//!
+//! # Terminal 2 - Node 2
+//! cargo run -p server -- --node-id 2 --raft-addr 127.0.0.1:6002 \
+//!     --peer 1,127.0.0.1:6001 --peer 3,127.0.0.1:6003 \
+//!     --data-dir ./node2 --port 5002
+//!
+//! # Terminal 3 - Node 3
+//! cargo run -p server -- --node-id 3 --raft-addr 127.0.0.1:6003 \
+//!     --peer 1,127.0.0.1:6001 --peer 2,127.0.0.1:6002 \
+//!     --data-dir ./node3 --port 5003
+//! ```
 
 mod error;
 
 use anyhow::Result;
 use clap::Parser;
-use database::{Database, QueryResult};
+use database::{Database, QueryResult, RaftConfig};
 use protocol::{ClientRequest, ServerResponse, frame};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,11 +45,11 @@ const DEFAULT_BUFFER_PAGES: usize = 256;
 #[derive(Parser, Debug)]
 #[command(name = "toydb-server", about = "TCP server for the toy SQL database")]
 struct Args {
-    /// Host address to bind to
+    /// Host address to bind to for client connections
     #[arg(long, default_value = DEFAULT_HOST)]
     host: String,
 
-    /// Port to listen on
+    /// Port to listen on for client connections
     #[arg(long, default_value_t = DEFAULT_PORT)]
     port: u16,
 
@@ -47,19 +68,90 @@ struct Args {
     /// Maximum number of pages held in the file pager cache
     #[arg(long, default_value_t = DEFAULT_BUFFER_PAGES)]
     buffer_pages: usize,
+
+    // --- Raft configuration ---
+    /// Node ID for this server in the Raft cluster (1, 2, 3, etc.)
+    /// Enables Raft consensus when set.
+    #[arg(long)]
+    node_id: Option<u64>,
+
+    /// Address for Raft RPC communication (e.g., "127.0.0.1:6001").
+    /// Required when node-id is set for multi-node clusters.
+    #[arg(long)]
+    raft_addr: Option<String>,
+
+    /// Peer nodes in format "node_id,address" (e.g., "2,127.0.0.1:6002").
+    /// Can be specified multiple times for each peer.
+    #[arg(long = "peer", value_name = "ID,ADDR")]
+    peers: Vec<String>,
+
+    /// Use persistent Raft storage (survives restarts).
+    /// Without this flag, Raft state is lost on restart.
+    #[arg(long)]
+    persistent: bool,
+}
+
+impl Args {
+    /// Build RaftConfig from command-line arguments.
+    fn raft_config(&self) -> Result<Option<RaftConfig>> {
+        let Some(node_id) = self.node_id else {
+            return Ok(None);
+        };
+
+        // Parse peers
+        let peers: Result<Vec<(u64, String)>> = self
+            .peers
+            .iter()
+            .map(|p| {
+                let parts: Vec<&str> = p.splitn(2, ',').collect();
+                if parts.len() != 2 {
+                    anyhow::bail!("Invalid peer format '{}', expected 'node_id,address'", p);
+                }
+                let id: u64 = parts[0]
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("Invalid node ID in peer '{}'", p))?;
+                Ok((id, parts[1].to_string()))
+            })
+            .collect();
+        let peers = peers?;
+
+        let config = if let Some(ref raft_addr) = self.raft_addr {
+            // Multi-node cluster mode
+            if self.persistent {
+                RaftConfig::cluster_persistent(node_id, raft_addr.clone(), peers)
+            } else {
+                RaftConfig::cluster(node_id, raft_addr.clone(), peers)
+            }
+        } else if peers.is_empty() {
+            // Single-node mode (no peers, no raft_addr needed)
+            if self.persistent {
+                RaftConfig::single_node_persistent(node_id)
+            } else {
+                RaftConfig::single_node(node_id)
+            }
+        } else {
+            anyhow::bail!("--raft-addr is required when peers are specified");
+        };
+
+        Ok(Some(config))
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
+    // Build Raft configuration
+    let raft_config = args.raft_config()?;
+
     // Initialize database
     let db = Arc::new(
-        Database::new(
+        Database::with_raft_config(
             &args.data_dir,
             &args.catalog_file,
             &args.wal_file,
             args.buffer_pages,
+            raft_config.clone(),
         )
         .await?,
     );
@@ -68,11 +160,56 @@ async fn main() -> Result<()> {
     let addr = format!("{}:{}", args.host, args.port);
     let listener = TcpListener::bind(&addr).await?;
 
-    println!("Server listening on {}", addr);
-    println!("Data directory: {:?}", args.data_dir);
-    println!("Buffer pool: {} pages", args.buffer_pages);
+    println!("╔════════════════════════════════════════════════════════════╗");
+    println!("║                    ToyDB Server Started                    ║");
+    println!("╠════════════════════════════════════════════════════════════╣");
+    println!("║  Client address:  {:43}║", addr);
+    println!("║  Data directory:  {:43}║", format!("{:?}", args.data_dir));
+    println!(
+        "║  Buffer pool:     {:43}║",
+        format!("{} pages", args.buffer_pages)
+    );
+
+    if let Some(ref config) = raft_config {
+        println!("╠════════════════════════════════════════════════════════════╣");
+        println!("║  Raft enabled:    {:43}║", "yes");
+        println!("║  Node ID:         {:43}║", config.node_id.to_string());
+        if let Some(ref raft_addr) = config.listen_addr {
+            println!("║  Raft address:    {:43}║", raft_addr);
+        }
+        println!(
+            "║  Persistent:      {:43}║",
+            if config.persistent_storage {
+                "yes"
+            } else {
+                "no"
+            }
+        );
+        if !config.peers.is_empty() {
+            println!(
+                "║  Peers:           {:43}║",
+                format!("{} nodes", config.peers.len())
+            );
+            for (id, addr) in &config.peers {
+                println!("║    - Node {}:      {:43}║", id, addr);
+            }
+        }
+        println!(
+            "║  Leader status:   {:43}║",
+            if db.is_leader() {
+                "LEADER ✓"
+            } else {
+                "follower"
+            }
+        );
+    } else {
+        println!("║  Raft enabled:    {:43}║", "no (standalone mode)");
+    }
+
+    println!("╠════════════════════════════════════════════════════════════╣");
+    println!("║  Press Ctrl+C to shut down                                 ║");
+    println!("╚════════════════════════════════════════════════════════════╝");
     println!();
-    println!("Press Ctrl+C to shut down");
 
     // Spawn server task
     let server_task = tokio::spawn(run_server(listener, db));

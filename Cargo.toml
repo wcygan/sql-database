@@ -18,6 +18,7 @@ members = [
     "crates/wal-viewer",
     "crates/repl",
     "crates/testsupport",
+    "crates/raft",
 ]
 
 resolver = "2"
@@ -37,6 +38,7 @@ server = { path = "crates/server" }
 storage = { path = "crates/storage" }
 types = { path = "crates/types" }
 wal = { path = "crates/wal" }
+raft = { path = "crates/raft" }
 repl = { path = "crates/repl" }
 testsupport = { path = "crates/testsupport" }
 proptest = "1.9.0"
@@ -64,4 +66,11 @@ tui-textarea = "0.6"
 syntect = { version = "5.2", default-features = false, features = ["parsing", "regex-fancy"] }
 arboard = "3.4"
 tokio = { version = "1.40", features = ["rt", "rt-multi-thread", "sync", "macros", "fs", "io-util", "net", "signal"] }
+openraft = { version = "0.9", features = ["serde"] }
+openraft-memstore = "0.9"
+async-trait = "0.1"
 num-integer = "0.1.46"
+axum = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tower = "0.5"
+crc32fast = "1.4"

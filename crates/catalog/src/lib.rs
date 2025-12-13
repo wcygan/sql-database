@@ -131,6 +131,63 @@ impl Catalog {
         Ok(())
     }
 
+    /// Remove a table by its identifier.
+    pub fn drop_table_by_id(&mut self, table_id: TableId) -> DbResult<()> {
+        let idx = self
+            .table_id_index
+            .get(&table_id)
+            .copied()
+            .ok_or_else(|| DbError::Catalog(format!("unknown table id {}", table_id.0)))?;
+        self.tables.remove(idx);
+        self.rebuild_indexes();
+        Ok(())
+    }
+
+    /// Create a table with a specific table ID (used for Raft state machine replay).
+    pub fn create_table_with_id(
+        &mut self,
+        name: &str,
+        table_id: TableId,
+        schema: TableSchema,
+        primary_key: Option<Vec<String>>,
+    ) -> DbResult<TableId> {
+        Self::validate_table_name(name)?;
+        if self.table_name_index.contains_key(name) {
+            return Err(DbError::Catalog(format!("table '{name}' already exists")));
+        }
+        if self.table_id_index.contains_key(&table_id) {
+            return Err(DbError::Catalog(format!(
+                "table id {} already exists",
+                table_id.0
+            )));
+        }
+
+        let mut table = TableMeta::new(table_id, name.to_string(), schema);
+
+        // Resolve primary key column names to ordinals
+        if let Some(pk_names) = primary_key {
+            let mut pk_ordinals = Vec::with_capacity(pk_names.len());
+            for pk_name in &pk_names {
+                let ordinal = table.schema.column_index(pk_name).ok_or_else(|| {
+                    DbError::Catalog(format!(
+                        "primary key column '{pk_name}' not found in table schema"
+                    ))
+                })?;
+                pk_ordinals.push(ordinal);
+            }
+            table.set_primary_key(pk_ordinals)?;
+        }
+
+        // Update next_table_id if needed
+        if table_id.0 >= self.next_table_id {
+            self.next_table_id = table_id.0 + 1;
+        }
+
+        self.tables.push(table);
+        self.rebuild_indexes();
+        Ok(table_id)
+    }
+
     /// Create an index over the given table columns, returning its identifier.
     ///
     /// # Example
@@ -460,6 +517,11 @@ pub struct TableSchema {
 }
 
 impl TableSchema {
+    /// Create a new schema from columns that already have SqlType set.
+    pub fn new(columns: Vec<Column>) -> DbResult<Self> {
+        Self::try_new(columns)
+    }
+
     pub fn try_new(columns: Vec<Column>) -> DbResult<Self> {
         if columns.is_empty() {
             return Err(DbError::Catalog(

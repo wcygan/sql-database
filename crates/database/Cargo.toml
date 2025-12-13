@@ -8,12 +8,16 @@ anyhow = { workspace = true }
 catalog = { workspace = true }
 common = { workspace = true }
 buffer = { workspace = true }
+expr = { workspace = true }
 parser = { workspace = true }
 planner = { workspace = true }
 executor = { workspace = true }
+storage = { workspace = true }
 types = { workspace = true }
 wal = { workspace = true }
+raft = { workspace = true }
 tokio = { workspace = true }
+openraft = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
