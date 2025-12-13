@@ -25,6 +25,7 @@
 //! ```
 
 mod error;
+mod tui;
 
 use anyhow::Result;
 use clap::Parser;
@@ -33,7 +34,7 @@ use protocol::{ClientRequest, ServerResponse, frame};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::signal;
+use tokio::sync::RwLock;
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 5432;
@@ -89,6 +90,11 @@ struct Args {
     /// Without this flag, Raft state is lost on restart.
     #[arg(long)]
     persistent: bool,
+
+    /// Run in headless mode (static banner, no TUI).
+    /// Useful for running in scripts or when stdout is not a TTY.
+    #[arg(long)]
+    headless: bool,
 }
 
 impl Args {
@@ -160,6 +166,23 @@ async fn main() -> Result<()> {
     let addr = format!("{}:{}", args.host, args.port);
     let listener = TcpListener::bind(&addr).await?;
 
+    if args.headless {
+        // Headless mode: static banner + println logging
+        run_headless(db, listener, &addr, &args, raft_config.as_ref()).await
+    } else {
+        // TUI mode: real-time status display
+        run_tui_mode(db, listener, &addr, raft_config.as_ref()).await
+    }
+}
+
+/// Run in headless mode with static banner.
+async fn run_headless(
+    db: Arc<Database>,
+    listener: TcpListener,
+    addr: &str,
+    args: &Args,
+    raft_config: Option<&RaftConfig>,
+) -> Result<()> {
     println!("╔════════════════════════════════════════════════════════════╗");
     println!("║                    ToyDB Server Started                    ║");
     println!("╠════════════════════════════════════════════════════════════╣");
@@ -170,7 +193,12 @@ async fn main() -> Result<()> {
         format!("{} pages", args.buffer_pages)
     );
 
-    if let Some(ref config) = raft_config {
+    if let Some(config) = raft_config {
+        // Wait briefly for leader election to complete before showing status
+        if !config.peers.is_empty() {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+
         println!("╠════════════════════════════════════════════════════════════╣");
         println!("║  Raft enabled:    {:43}║", "yes");
         println!("║  Node ID:         {:43}║", config.node_id.to_string());
@@ -190,17 +218,24 @@ async fn main() -> Result<()> {
                 "║  Peers:           {:43}║",
                 format!("{} nodes", config.peers.len())
             );
-            for (id, addr) in &config.peers {
-                println!("║    - Node {}:      {:43}║", id, addr);
+            for (id, peer_addr) in &config.peers {
+                println!("║    - Node {}:      {:43}║", id, peer_addr);
             }
         }
+        let leader_status = if db.is_leader() {
+            "LEADER ✓".to_string()
+        } else if let Some(leader_id) = db.current_leader().await {
+            format!("follower (leader: node {})", leader_id)
+        } else {
+            "waiting for quorum...".to_string()
+        };
+        println!("║  Leader status:   {:43}║", leader_status);
         println!(
-            "║  Leader status:   {:43}║",
-            if db.is_leader() {
-                "LEADER ✓"
-            } else {
-                "follower"
-            }
+            "║  Health endpoint: {:43}║",
+            format!(
+                "http://{}/health",
+                config.listen_addr.as_deref().unwrap_or("N/A")
+            )
         );
     } else {
         println!("║  Raft enabled:    {:43}║", "no (standalone mode)");
@@ -215,7 +250,7 @@ async fn main() -> Result<()> {
     let server_task = tokio::spawn(run_server(listener, db));
 
     // Wait for shutdown signal
-    signal::ctrl_c().await?;
+    tokio::signal::ctrl_c().await?;
     println!("\nShutdown signal received, stopping server...");
 
     // Abort server task
@@ -224,7 +259,29 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Run in TUI mode with real-time status display.
+async fn run_tui_mode(
+    db: Arc<Database>,
+    listener: TcpListener,
+    addr: &str,
+    raft_config: Option<&RaftConfig>,
+) -> Result<()> {
+    let node_id = raft_config.map(|c| c.node_id).unwrap_or(1);
+    let raft_addr = raft_config.and_then(|c| c.listen_addr.clone());
+    let raft_enabled = raft_config.is_some();
+
+    let state = Arc::new(RwLock::new(tui::TuiState::new(
+        addr.to_string(),
+        raft_addr,
+        raft_enabled,
+        node_id,
+    )));
+
+    tui::run_tui(db, listener, state).await
+}
+
 /// Run the server loop, accepting connections and spawning handlers.
+/// Used only in headless mode.
 async fn run_server(listener: TcpListener, db: Arc<Database>) -> Result<()> {
     loop {
         match listener.accept().await {
@@ -304,6 +361,7 @@ async fn execute_sql_request(db: &Database, sql: &str, client_addr: &str) -> Ser
 }
 
 /// Handle a single client connection.
+/// Used only in headless mode.
 async fn handle_client(mut socket: TcpStream, db: Arc<Database>) -> Result<()> {
     let client_addr = socket
         .peer_addr()

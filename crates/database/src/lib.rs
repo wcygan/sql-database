@@ -8,8 +8,11 @@ use parser::{parse_sql, Statement};
 use planner::{PhysicalPlan, Planner, PlanningContext, ResolvedExpr};
 use raft::{
     ApplyHandler, ClusterConfig, Command, CommandResponse, HttpNetworkFactory, MemRaftStore,
-    NetworkFactory, PersistentRaftStore, RaftHttpState, RaftNode, ServerHandle, TypeConfig,
+    NetworkFactory, PersistentRaftStore, RaftHttpState, ServerHandle, TypeConfig,
 };
+
+// Re-export RaftNode type for external use (e.g., server TUI metrics polling)
+pub use raft::RaftNode;
 use std::{
     collections::BTreeMap,
     fs,
@@ -211,7 +214,7 @@ impl Database {
         let (raft, http_server, node_id) = if let Some(config) = raft_config.filter(|c| c.enabled) {
             let (raft_node, server) =
                 Self::init_raft(&config, catalog_arc.clone(), data_dir_arc.clone()).await?;
-            (Some(Arc::new(raft_node)), server, config.node_id)
+            (Some(raft_node), server, config.node_id)
         } else {
             (None, None, 1)
         };
@@ -239,7 +242,7 @@ impl Database {
         config: &RaftConfig,
         catalog: Arc<RwLock<Catalog>>,
         data_dir: Arc<PathBuf>,
-    ) -> Result<(RaftNode, Option<ServerHandle>)> {
+    ) -> Result<(Arc<RaftNode>, Option<ServerHandle>)> {
         let node_id = config.node_id;
 
         // Create apply handler that applies commands to actual storage
@@ -316,7 +319,7 @@ impl Database {
         log_store: impl RaftLogStorage<TypeConfig> + 'static,
         state_machine: impl RaftStateMachine<TypeConfig> + 'static,
         is_restart: bool,
-    ) -> Result<(RaftNode, Option<ServerHandle>)> {
+    ) -> Result<(Arc<RaftNode>, Option<ServerHandle>)> {
         // Create stub network factory
         let network = NetworkFactory::new(node_id);
 
@@ -339,19 +342,20 @@ impl Database {
         // Wait for the node to become leader
         Self::wait_for_leader(&raft, node_id).await?;
 
-        Ok((raft, None))
+        Ok((Arc::new(raft), None))
     }
 
     /// Initialize Raft in multi-node mode with HTTP transport.
     ///
     /// If `is_restart` is true, skip initialization (cluster already exists).
+    /// Returns Arc<RaftNode> because the HTTP server holds a reference to it.
     async fn init_raft_multi_node(
         config: &RaftConfig,
         raft_config: Arc<openraft::Config>,
         log_store: impl RaftLogStorage<TypeConfig> + 'static,
         state_machine: impl RaftStateMachine<TypeConfig> + 'static,
         is_restart: bool,
-    ) -> Result<(RaftNode, Option<ServerHandle>)> {
+    ) -> Result<(Arc<RaftNode>, Option<ServerHandle>)> {
         let node_id = config.node_id;
         let listen_addr = config
             .listen_addr
@@ -404,17 +408,10 @@ impl Database {
             let _ = raft_arc.initialize(members).await;
         }
 
-        // Wait for leader election (on restart, previous leader should re-elect)
-        if node_id == 1 {
-            Self::wait_for_leader(&raft_arc, node_id).await?;
-        }
+        // In multi-node clusters, don't wait for leader - other nodes may not be up yet.
+        // Leader election will happen once a quorum is available.
 
-        // Extract the inner Raft from Arc (we need to return owned RaftNode)
-        // This is safe because we just created it and hold the only reference
-        let raft =
-            Arc::try_unwrap(raft_arc).map_err(|_| anyhow::anyhow!("failed to unwrap Raft node"))?;
-
-        Ok((raft, Some(server_handle)))
+        Ok((raft_arc, Some(server_handle)))
     }
 
     /// Wait for this node to become leader (or timeout).

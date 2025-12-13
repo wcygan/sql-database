@@ -114,7 +114,7 @@ node1_dir := "./node1"
 node2_dir := "./node2"
 node3_dir := "./node3"
 
-# Start single-node Raft server (simplest Raft mode)
+# Start single-node Raft server with TUI
 raft-single:
     cargo run --release --package server -- \
         --node-id 1 \
@@ -129,7 +129,7 @@ raft-single-persistent:
         --data-dir {{node1_dir}} \
         --port 5001
 
-# Start Node 1 of 3-node cluster (leader bootstrap)
+# Start Node 1 of 3-node cluster with TUI
 raft-node1:
     cargo run --release --package server -- \
         --node-id 1 \
@@ -139,7 +139,7 @@ raft-node1:
         --data-dir {{node1_dir}} \
         --port 5001
 
-# Start Node 2 of 3-node cluster
+# Start Node 2 of 3-node cluster with TUI
 raft-node2:
     cargo run --release --package server -- \
         --node-id 2 \
@@ -149,7 +149,7 @@ raft-node2:
         --data-dir {{node2_dir}} \
         --port 5002
 
-# Start Node 3 of 3-node cluster
+# Start Node 3 of 3-node cluster with TUI
 raft-node3:
     cargo run --release --package server -- \
         --node-id 3 \
@@ -158,6 +158,39 @@ raft-node3:
         --peer 2,127.0.0.1:6002 \
         --data-dir {{node3_dir}} \
         --port 5003
+
+# Start Node 1 in headless mode (no TUI, for scripts/background)
+raft-node1-headless:
+    cargo run --release --package server -- \
+        --node-id 1 \
+        --raft-addr 127.0.0.1:6001 \
+        --peer 2,127.0.0.1:6002 \
+        --peer 3,127.0.0.1:6003 \
+        --data-dir {{node1_dir}} \
+        --port 5001 \
+        --headless
+
+# Start Node 2 in headless mode
+raft-node2-headless:
+    cargo run --release --package server -- \
+        --node-id 2 \
+        --raft-addr 127.0.0.1:6002 \
+        --peer 1,127.0.0.1:6001 \
+        --peer 3,127.0.0.1:6003 \
+        --data-dir {{node2_dir}} \
+        --port 5002 \
+        --headless
+
+# Start Node 3 in headless mode
+raft-node3-headless:
+    cargo run --release --package server -- \
+        --node-id 3 \
+        --raft-addr 127.0.0.1:6003 \
+        --peer 1,127.0.0.1:6001 \
+        --peer 2,127.0.0.1:6002 \
+        --data-dir {{node3_dir}} \
+        --port 5003 \
+        --headless
 
 # Start Node 1 with persistent storage
 raft-node1-persistent:
