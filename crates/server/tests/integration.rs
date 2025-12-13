@@ -8,8 +8,10 @@ use anyhow::{Result, anyhow, bail};
 use client::{Client, ClientError, QueryResult as ClientQueryResult};
 use protocol::ErrorCode;
 use std::future::Future;
-use testsupport::prelude::TestServer;
+use std::time::Duration;
+use testsupport::prelude::{TestServer, TestServerWithRaft};
 use tokio::task;
+use tokio::time::timeout;
 use types::Value;
 
 async fn run_with_server<F, Fut>(test: F) -> Result<()>
@@ -266,4 +268,222 @@ fn expect_count(result: ClientQueryResult, expected: u64) -> Result<()> {
         }
         other => Err(anyhow!("expected Count result, got {:?}", other)),
     }
+}
+
+// =============================================================================
+// Activity Events E2E Tests
+// =============================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn e2e_activity_events_for_insert() {
+    let mut server = TestServerWithRaft::start().await.unwrap();
+    let addr = server.address().to_string();
+
+    // Wait for Raft initialization
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Drain initial Raft events
+    let rx = server.activity_receiver();
+    while timeout(Duration::from_millis(50), rx.recv()).await.is_ok() {}
+
+    // Connect client and execute DDL (doesn't go through Raft)
+    let mut client = Client::connect(&addr).await.unwrap();
+    client
+        .execute("CREATE TABLE test (id INT, name TEXT)")
+        .await
+        .unwrap();
+
+    // Execute DML (goes through Raft)
+    expect_count(
+        client
+            .execute("INSERT INTO test VALUES (1, 'alice')")
+            .await
+            .unwrap(),
+        1,
+    )
+    .unwrap();
+
+    // Should receive activity event
+    let rx = server.activity_receiver();
+    let event = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("Should receive event")
+        .expect("Channel not closed");
+
+    assert!(
+        event.description.contains("INSERT"),
+        "Expected INSERT event, got: {}",
+        event.description
+    );
+
+    client.close().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn e2e_activity_events_for_update_delete() {
+    let mut server = TestServerWithRaft::start().await.unwrap();
+    let addr = server.address().to_string();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Drain initial events
+    let rx = server.activity_receiver();
+    while timeout(Duration::from_millis(50), rx.recv()).await.is_ok() {}
+
+    let mut client = Client::connect(&addr).await.unwrap();
+    client
+        .execute("CREATE TABLE items (id INT, price INT)")
+        .await
+        .unwrap();
+
+    // INSERT
+    expect_count(
+        client
+            .execute("INSERT INTO items VALUES (1, 100)")
+            .await
+            .unwrap(),
+        1,
+    )
+    .unwrap();
+
+    // Drain INSERT event
+    let rx = server.activity_receiver();
+    let _ = timeout(Duration::from_secs(1), rx.recv()).await;
+
+    // UPDATE
+    expect_count(
+        client
+            .execute("UPDATE items SET price = 50 WHERE id = 1")
+            .await
+            .unwrap(),
+        1,
+    )
+    .unwrap();
+
+    let event = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("Should receive event")
+        .expect("Channel not closed");
+    assert!(
+        event.description.contains("UPDATE"),
+        "Expected UPDATE, got: {}",
+        event.description
+    );
+
+    // DELETE
+    expect_count(
+        client
+            .execute("DELETE FROM items WHERE id = 1")
+            .await
+            .unwrap(),
+        1,
+    )
+    .unwrap();
+
+    let event = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("Should receive event")
+        .expect("Channel not closed");
+    assert!(
+        event.description.contains("DELETE"),
+        "Expected DELETE, got: {}",
+        event.description
+    );
+
+    client.close().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn e2e_activity_events_multiple_clients() {
+    let mut server = TestServerWithRaft::start().await.unwrap();
+    let addr = server.address().to_string();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Drain initial events
+    let rx = server.activity_receiver();
+    while timeout(Duration::from_millis(50), rx.recv()).await.is_ok() {}
+
+    // Setup: create table with one client
+    let mut setup = Client::connect(&addr).await.unwrap();
+    setup.execute("CREATE TABLE events (id INT)").await.unwrap();
+    setup.close().await.unwrap();
+
+    // Multiple clients write concurrently
+    let mut handles = vec![];
+    for i in 0..5 {
+        let addr = addr.clone();
+        handles.push(task::spawn(async move {
+            let mut client = Client::connect(&addr).await?;
+            let sql = format!("INSERT INTO events VALUES ({})", i);
+            client.execute(&sql).await?;
+            client.close().await?;
+            Result::<()>::Ok(())
+        }));
+    }
+
+    for handle in handles {
+        handle.await.unwrap().unwrap();
+    }
+
+    // Should receive 5 INSERT events
+    let rx = server.activity_receiver();
+    let mut insert_count = 0;
+    for _ in 0..5 {
+        let event = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("Should receive event")
+            .expect("Channel not closed");
+        if event.description.contains("INSERT") {
+            insert_count += 1;
+        }
+    }
+    assert_eq!(insert_count, 5, "Expected 5 INSERT events");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn e2e_activity_events_have_valid_metadata() {
+    let mut server = TestServerWithRaft::start().await.unwrap();
+    let addr = server.address().to_string();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Drain initial events
+    let rx = server.activity_receiver();
+    while timeout(Duration::from_millis(50), rx.recv()).await.is_ok() {}
+
+    let mut client = Client::connect(&addr).await.unwrap();
+    client.execute("CREATE TABLE meta (id INT)").await.unwrap();
+
+    // Insert multiple rows to verify indices increase
+    let mut last_index = 0u64;
+    for i in 1..=3 {
+        expect_count(
+            client
+                .execute(&format!("INSERT INTO meta VALUES ({})", i))
+                .await
+                .unwrap(),
+            1,
+        )
+        .unwrap();
+
+        let rx = server.activity_receiver();
+        let event = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("Should receive event")
+            .expect("Channel not closed");
+
+        // Verify metadata
+        assert!(event.log_index > 0, "Log index should be positive");
+        assert!(event.term > 0, "Term should be positive");
+        assert!(
+            event.log_index > last_index,
+            "Log index should increase: {} > {}",
+            event.log_index,
+            last_index
+        );
+        last_index = event.log_index;
+    }
+
+    client.close().await.unwrap();
 }

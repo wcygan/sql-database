@@ -7,9 +7,12 @@ use openraft::Raft;
 use parser::{parse_sql, Statement};
 use planner::{PhysicalPlan, Planner, PlanningContext, ResolvedExpr};
 use raft::{
-    ApplyHandler, ClusterConfig, Command, CommandResponse, HttpNetworkFactory, MemRaftStore,
-    NetworkFactory, PersistentRaftStore, RaftHttpState, ServerHandle, TypeConfig,
+    ActivitySender, ApplyHandler, ClusterConfig, Command, CommandResponse, HttpNetworkFactory,
+    MemRaftStore, NetworkFactory, PersistentRaftStore, RaftHttpState, ServerHandle, TypeConfig,
 };
+
+// Re-export activity types for external use (e.g., server TUI)
+pub use raft::{activity_channel, ActivityReceiver, RaftActivityEvent};
 
 // Re-export RaftNode type for external use (e.g., server TUI metrics polling)
 pub use raft::RaftNode;
@@ -40,7 +43,7 @@ pub enum QueryResult {
 }
 
 /// Configuration for Raft consensus mode.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct RaftConfig {
     /// Node ID for this database instance.
     pub node_id: u64,
@@ -55,18 +58,8 @@ pub struct RaftConfig {
     /// Whether to use persistent storage (survives restarts).
     /// When false, uses in-memory storage (data lost on restart).
     pub persistent_storage: bool,
-}
-
-impl Default for RaftConfig {
-    fn default() -> Self {
-        Self {
-            node_id: 1,
-            enabled: false,
-            listen_addr: None,
-            peers: Vec::new(),
-            persistent_storage: false,
-        }
-    }
+    /// Optional sender for Raft activity events (for TUI monitoring).
+    pub activity_tx: Option<ActivitySender>,
 }
 
 impl RaftConfig {
@@ -78,6 +71,7 @@ impl RaftConfig {
             listen_addr: None,
             peers: Vec::new(),
             persistent_storage: false,
+            activity_tx: None,
         }
     }
 
@@ -89,12 +83,19 @@ impl RaftConfig {
             listen_addr: None,
             peers: Vec::new(),
             persistent_storage: true,
+            activity_tx: None,
         }
     }
 
     /// Enable or disable persistent storage.
     pub fn with_persistent_storage(mut self, enabled: bool) -> Self {
         self.persistent_storage = enabled;
+        self
+    }
+
+    /// Set the activity sender for TUI monitoring.
+    pub fn with_activity_sender(mut self, tx: ActivitySender) -> Self {
+        self.activity_tx = Some(tx);
         self
     }
 
@@ -115,6 +116,7 @@ impl RaftConfig {
             listen_addr: Some(listen_addr.into()),
             peers,
             persistent_storage: false,
+            activity_tx: None,
         }
     }
 
@@ -130,6 +132,7 @@ impl RaftConfig {
             listen_addr: Some(listen_addr.into()),
             peers,
             persistent_storage: true,
+            activity_tx: None,
         }
     }
 
@@ -266,10 +269,12 @@ impl Database {
             let is_restart = raft_data_dir.join("raft_state.json").exists();
 
             let store = Arc::new(
-                PersistentRaftStore::open_with_handler(&raft_data_dir, Some(apply_handler))
-                    .map_err(|e| {
-                        anyhow::anyhow!("failed to open persistent Raft storage: {}", e)
-                    })?,
+                PersistentRaftStore::open_with_handler_and_activity(
+                    &raft_data_dir,
+                    Some(apply_handler),
+                    config.activity_tx.clone(),
+                )
+                .map_err(|e| anyhow::anyhow!("failed to open persistent Raft storage: {}", e))?,
             );
 
             let (log_store, state_machine) =
@@ -296,7 +301,12 @@ impl Database {
             }
         } else {
             // In-memory storage - faster but lost on restart (always fresh)
-            let store = Arc::new(MemRaftStore::with_apply_handler(apply_handler));
+            let store = Arc::new(match &config.activity_tx {
+                Some(tx) => {
+                    MemRaftStore::with_apply_handler_and_activity(apply_handler, tx.clone())
+                }
+                None => MemRaftStore::with_apply_handler(apply_handler),
+            });
 
             let (log_store, state_machine) = Adaptor::<TypeConfig, Arc<MemRaftStore>>::new(store);
 

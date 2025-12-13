@@ -32,7 +32,6 @@ pub struct ActivityEntry {
 
 /// Kind of activity for color coding.
 #[derive(Clone, Copy)]
-#[allow(dead_code)] // Raft variant reserved for future Raft activity logging
 pub enum ActivityKind {
     Connection,
     Disconnection,

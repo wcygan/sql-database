@@ -6,7 +6,96 @@
 
 use common::{RecordId, TableId};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::mpsc;
 use types::Value;
+
+/// Event sent when Raft applies an entry to the state machine.
+///
+/// These events can be used for monitoring replication in real-time.
+#[derive(Clone, Debug)]
+pub struct RaftActivityEvent {
+    /// Log index of the applied entry
+    pub log_index: u64,
+    /// Term of the applied entry
+    pub term: u64,
+    /// Description of what was applied
+    pub description: String,
+}
+
+impl RaftActivityEvent {
+    /// Create a new activity event.
+    pub fn new(log_index: u64, term: u64, description: impl Into<String>) -> Self {
+        Self {
+            log_index,
+            term,
+            description: description.into(),
+        }
+    }
+
+    /// Create an event from a command.
+    pub fn from_command(log_index: u64, term: u64, cmd: &Command) -> Self {
+        let description = match cmd {
+            Command::Insert { table_id, row } => {
+                format!("INSERT table={} cols={}", table_id.0, row.len())
+            }
+            Command::Update { table_id, rid, .. } => {
+                format!(
+                    "UPDATE table={} rid={}:{}",
+                    table_id.0, rid.page_id.0, rid.slot
+                )
+            }
+            Command::Delete { table_id, rid } => {
+                format!(
+                    "DELETE table={} rid={}:{}",
+                    table_id.0, rid.page_id.0, rid.slot
+                )
+            }
+            Command::CreateTable { name, .. } => {
+                format!("CREATE TABLE {}", name)
+            }
+            Command::DropTable { table_id } => {
+                format!("DROP TABLE id={}", table_id.0)
+            }
+            Command::CreateIndex {
+                table_id,
+                index_name,
+                ..
+            } => {
+                format!("CREATE INDEX {} on table={}", index_name, table_id.0)
+            }
+            Command::DropIndex {
+                table_id,
+                index_name,
+            } => {
+                format!("DROP INDEX {} on table={}", index_name, table_id.0)
+            }
+        };
+        Self::new(log_index, term, description)
+    }
+
+    /// Create an event for a membership change.
+    pub fn membership(log_index: u64, term: u64) -> Self {
+        Self::new(log_index, term, "MEMBERSHIP CHANGE")
+    }
+
+    /// Create an event for a blank entry.
+    pub fn blank(log_index: u64, term: u64) -> Self {
+        Self::new(log_index, term, "BLANK (heartbeat)")
+    }
+}
+
+/// Sender for Raft activity events.
+pub type ActivitySender = Arc<mpsc::UnboundedSender<RaftActivityEvent>>;
+
+/// Receiver for Raft activity events.
+pub type ActivityReceiver = mpsc::UnboundedReceiver<RaftActivityEvent>;
+
+/// Create a new activity event channel.
+pub fn activity_channel() -> (ActivitySender, ActivityReceiver) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    (Arc::new(tx), rx)
+}
 
 /// A database command to be replicated through Raft consensus.
 ///
@@ -112,6 +201,151 @@ impl CommandResponse {
 mod tests {
     use super::*;
     use common::PageId;
+
+    #[test]
+    fn activity_event_from_insert_command() {
+        let cmd = Command::Insert {
+            table_id: TableId(42),
+            row: vec![Value::Int(1), Value::Text("test".into()), Value::Bool(true)],
+        };
+        let event = RaftActivityEvent::from_command(10, 5, &cmd);
+        assert_eq!(event.log_index, 10);
+        assert_eq!(event.term, 5);
+        assert_eq!(event.description, "INSERT table=42 cols=3");
+    }
+
+    #[test]
+    fn activity_event_from_update_command() {
+        let cmd = Command::Update {
+            table_id: TableId(7),
+            rid: RecordId {
+                page_id: PageId(3),
+                slot: 15,
+            },
+            new_row: vec![Value::Int(999)],
+        };
+        let event = RaftActivityEvent::from_command(100, 12, &cmd);
+        assert_eq!(event.log_index, 100);
+        assert_eq!(event.term, 12);
+        assert_eq!(event.description, "UPDATE table=7 rid=3:15");
+    }
+
+    #[test]
+    fn activity_event_from_delete_command() {
+        let cmd = Command::Delete {
+            table_id: TableId(5),
+            rid: RecordId {
+                page_id: PageId(0),
+                slot: 2,
+            },
+        };
+        let event = RaftActivityEvent::from_command(50, 8, &cmd);
+        assert_eq!(event.log_index, 50);
+        assert_eq!(event.term, 8);
+        assert_eq!(event.description, "DELETE table=5 rid=0:2");
+    }
+
+    #[test]
+    fn activity_event_from_create_table_command() {
+        let cmd = Command::CreateTable {
+            name: "users".to_string(),
+            table_id: TableId(1),
+            columns: vec![],
+            primary_key: None,
+        };
+        let event = RaftActivityEvent::from_command(1, 1, &cmd);
+        assert_eq!(event.description, "CREATE TABLE users");
+    }
+
+    #[test]
+    fn activity_event_from_drop_table_command() {
+        let cmd = Command::DropTable {
+            table_id: TableId(99),
+        };
+        let event = RaftActivityEvent::from_command(200, 15, &cmd);
+        assert_eq!(event.description, "DROP TABLE id=99");
+    }
+
+    #[test]
+    fn activity_event_from_create_index_command() {
+        let cmd = Command::CreateIndex {
+            table_id: TableId(3),
+            index_name: "idx_users_email".to_string(),
+            columns: vec!["email".to_string()],
+        };
+        let event = RaftActivityEvent::from_command(25, 3, &cmd);
+        assert_eq!(event.description, "CREATE INDEX idx_users_email on table=3");
+    }
+
+    #[test]
+    fn activity_event_from_drop_index_command() {
+        let cmd = Command::DropIndex {
+            table_id: TableId(3),
+            index_name: "idx_users_email".to_string(),
+        };
+        let event = RaftActivityEvent::from_command(26, 3, &cmd);
+        assert_eq!(event.description, "DROP INDEX idx_users_email on table=3");
+    }
+
+    #[test]
+    fn activity_event_membership() {
+        let event = RaftActivityEvent::membership(77, 9);
+        assert_eq!(event.log_index, 77);
+        assert_eq!(event.term, 9);
+        assert_eq!(event.description, "MEMBERSHIP CHANGE");
+    }
+
+    #[test]
+    fn activity_event_blank() {
+        let event = RaftActivityEvent::blank(1000, 20);
+        assert_eq!(event.log_index, 1000);
+        assert_eq!(event.term, 20);
+        assert_eq!(event.description, "BLANK (heartbeat)");
+    }
+
+    #[tokio::test]
+    async fn activity_channel_sends_and_receives() {
+        let (tx, mut rx) = activity_channel();
+
+        // Send multiple events
+        tx.send(RaftActivityEvent::new(1, 1, "test event 1"))
+            .unwrap();
+        tx.send(RaftActivityEvent::new(2, 1, "test event 2"))
+            .unwrap();
+        tx.send(RaftActivityEvent::blank(3, 1)).unwrap();
+
+        // Receive and verify
+        let e1 = rx.recv().await.unwrap();
+        assert_eq!(e1.log_index, 1);
+        assert_eq!(e1.description, "test event 1");
+
+        let e2 = rx.recv().await.unwrap();
+        assert_eq!(e2.log_index, 2);
+        assert_eq!(e2.description, "test event 2");
+
+        let e3 = rx.recv().await.unwrap();
+        assert_eq!(e3.log_index, 3);
+        assert_eq!(e3.description, "BLANK (heartbeat)");
+    }
+
+    #[tokio::test]
+    async fn activity_channel_arc_sender_is_clonable() {
+        let (tx, mut rx) = activity_channel();
+
+        // Clone the sender (via Arc)
+        let tx2 = tx.clone();
+
+        // Send from both senders
+        tx.send(RaftActivityEvent::new(1, 1, "from tx1")).unwrap();
+        tx2.send(RaftActivityEvent::new(2, 1, "from tx2")).unwrap();
+
+        // Both should be received
+        let e1 = rx.recv().await.unwrap();
+        let e2 = rx.recv().await.unwrap();
+
+        assert_eq!(e1.description, "from tx1");
+        assert_eq!(e2.description, "from tx2");
+    }
 
     #[test]
     fn command_serialization_roundtrip() {

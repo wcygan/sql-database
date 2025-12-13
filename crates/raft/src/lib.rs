@@ -102,7 +102,9 @@ pub mod persistent_storage;
 pub mod state_machine;
 pub mod type_config;
 
-pub use command::{Command, CommandResponse};
+pub use command::{
+    activity_channel, ActivityReceiver, ActivitySender, Command, CommandResponse, RaftActivityEvent,
+};
 pub use config::NodeConfig;
 pub use http_server::{create_router, start_server, RaftHttpState, ServerHandle};
 pub use log_storage::{
@@ -125,9 +127,21 @@ pub type NodeId = u64;
 ///
 /// Used for testing and development where persistence is not required.
 pub fn create_mem_storage(apply_handler: Option<ApplyHandler>) -> LogStore {
-    let store = match apply_handler {
-        Some(handler) => MemRaftStore::with_apply_handler(handler),
-        None => MemRaftStore::new(),
+    create_mem_storage_with_activity(apply_handler, None)
+}
+
+/// Create an in-memory Raft storage instance with activity event channel.
+///
+/// Used for testing and development where persistence is not required.
+/// Activity events will be sent to the provided channel for monitoring.
+pub fn create_mem_storage_with_activity(
+    apply_handler: Option<ApplyHandler>,
+    activity_tx: Option<ActivitySender>,
+) -> LogStore {
+    let store = match (apply_handler, activity_tx) {
+        (Some(handler), Some(tx)) => MemRaftStore::with_apply_handler_and_activity(handler, tx),
+        (Some(handler), None) => MemRaftStore::with_apply_handler(handler),
+        (None, _) => MemRaftStore::new(),
     };
     Arc::new(store)
 }
@@ -148,11 +162,26 @@ pub fn create_persistent_storage(
     config: &NodeConfig,
     apply_handler: Option<ApplyHandler>,
 ) -> Result<PersistentLogStore, StorageError<NodeId>> {
-    let store =
-        PersistentRaftStore::open_with_handler(&config.data_dir, apply_handler).map_err(|e| {
-            StorageError::IO {
-                source: StorageIOError::write_logs(&e),
-            }
-        })?;
+    create_persistent_storage_with_activity(config, apply_handler, None)
+}
+
+/// Create a persistent Raft storage instance with activity event channel.
+///
+/// Used for production deployments where durability is required.
+/// Activity events will be sent to the provided channel for monitoring.
+#[allow(clippy::result_large_err)] // StorageError from OpenRaft is inherently large
+pub fn create_persistent_storage_with_activity(
+    config: &NodeConfig,
+    apply_handler: Option<ApplyHandler>,
+    activity_tx: Option<ActivitySender>,
+) -> Result<PersistentLogStore, StorageError<NodeId>> {
+    let store = PersistentRaftStore::open_with_handler_and_activity(
+        &config.data_dir,
+        apply_handler,
+        activity_tx,
+    )
+    .map_err(|e| StorageError::IO {
+        source: StorageIOError::write_logs(&e),
+    })?;
     Ok(Arc::new(store))
 }

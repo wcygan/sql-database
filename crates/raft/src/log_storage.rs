@@ -3,6 +3,7 @@
 //! For Milestone 1 (single-node mode), we use an in-memory implementation
 //! that can be swapped for a persistent store in a later milestone.
 
+use crate::command::{ActivitySender, RaftActivityEvent};
 use crate::type_config::{Entry, LogId, SnapshotMeta, TypeConfig};
 use crate::{Command, CommandResponse, NodeId};
 
@@ -61,6 +62,9 @@ pub struct MemRaftStore {
 
     /// Optional handler for applying commands to actual database storage
     apply_handler: Option<ApplyHandler>,
+
+    /// Optional sender for activity events (for TUI monitoring)
+    activity_tx: Option<ActivitySender>,
 }
 
 /// Stored snapshot data
@@ -88,6 +92,7 @@ impl MemRaftStore {
             snapshot_idx: RwLock::new(0),
             current_snapshot: RwLock::new(None),
             apply_handler: None,
+            activity_tx: None,
         }
     }
 
@@ -105,6 +110,28 @@ impl MemRaftStore {
             snapshot_idx: RwLock::new(0),
             current_snapshot: RwLock::new(None),
             apply_handler: Some(apply_handler),
+            activity_tx: None,
+        }
+    }
+
+    /// Create a new in-memory store with an apply handler and activity sender.
+    ///
+    /// The handler will be called when commands are committed to apply them
+    /// to actual database storage. Activity events will be sent to the provided channel.
+    pub fn with_apply_handler_and_activity(
+        apply_handler: ApplyHandler,
+        activity_tx: ActivitySender,
+    ) -> Self {
+        Self {
+            last_purged_log_id: RwLock::new(None),
+            log: RwLock::new(BTreeMap::new()),
+            sm: RwLock::new(StateMachineData::default()),
+            vote: RwLock::new(None),
+            committed: RwLock::new(None),
+            snapshot_idx: RwLock::new(0),
+            current_snapshot: RwLock::new(None),
+            apply_handler: Some(apply_handler),
+            activity_tx: Some(activity_tx),
         }
     }
 }
@@ -302,14 +329,25 @@ impl RaftStorage<TypeConfig> for Arc<MemRaftStore> {
 
         for entry in entries {
             sm.last_applied_log = Some(entry.log_id);
+            let log_index = entry.log_id.index;
+            let term = entry.log_id.leader_id.term;
 
             match &entry.payload {
                 EntryPayload::Blank => {
+                    // Send activity event for blank entry
+                    if let Some(tx) = &self.activity_tx {
+                        let _ = tx.send(RaftActivityEvent::blank(log_index, term));
+                    }
                     res.push(CommandResponse::Ddl);
                 }
                 EntryPayload::Normal(cmd) => {
                     // Record the command for debugging/testing
                     sm.applied_commands.push(cmd.clone());
+
+                    // Send activity event
+                    if let Some(tx) = &self.activity_tx {
+                        let _ = tx.send(RaftActivityEvent::from_command(log_index, term, cmd));
+                    }
 
                     // If an apply handler is set, call it to apply to actual storage
                     if let Some(handler) = &self.apply_handler {
@@ -320,6 +358,10 @@ impl RaftStorage<TypeConfig> for Arc<MemRaftStore> {
                     }
                 }
                 EntryPayload::Membership(mem) => {
+                    // Send activity event for membership change
+                    if let Some(tx) = &self.activity_tx {
+                        let _ = tx.send(RaftActivityEvent::membership(log_index, term));
+                    }
                     sm.last_membership = StoredMembership::new(Some(entry.log_id), mem.clone());
                     res.push(CommandResponse::Ddl);
                 }

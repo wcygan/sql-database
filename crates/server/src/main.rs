@@ -29,7 +29,7 @@ mod tui;
 
 use anyhow::Result;
 use clap::Parser;
-use database::{Database, QueryResult, RaftConfig};
+use database::{ActivityReceiver, Database, QueryResult, RaftConfig, activity_channel};
 use protocol::{ClientRequest, ServerResponse, frame};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -148,7 +148,17 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Build Raft configuration
-    let raft_config = args.raft_config()?;
+    let mut raft_config = args.raft_config()?;
+
+    // Create activity channel for TUI mode (if Raft is enabled and not headless)
+    let activity_rx = if !args.headless && raft_config.is_some() {
+        let (tx, rx) = activity_channel();
+        // Attach the sender to the Raft config
+        raft_config = raft_config.map(|c| c.with_activity_sender(tx));
+        Some(rx)
+    } else {
+        None
+    };
 
     // Initialize database
     let db = Arc::new(
@@ -171,7 +181,7 @@ async fn main() -> Result<()> {
         run_headless(db, listener, &addr, &args, raft_config.as_ref()).await
     } else {
         // TUI mode: real-time status display
-        run_tui_mode(db, listener, &addr, raft_config.as_ref()).await
+        run_tui_mode(db, listener, &addr, raft_config.as_ref(), activity_rx).await
     }
 }
 
@@ -265,6 +275,7 @@ async fn run_tui_mode(
     listener: TcpListener,
     addr: &str,
     raft_config: Option<&RaftConfig>,
+    activity_rx: Option<ActivityReceiver>,
 ) -> Result<()> {
     let node_id = raft_config.map(|c| c.node_id).unwrap_or(1);
     let raft_addr = raft_config.and_then(|c| c.listen_addr.clone());
@@ -277,7 +288,7 @@ async fn run_tui_mode(
         node_id,
     )));
 
-    tui::run_tui(db, listener, state).await
+    tui::run_tui(db, listener, state, activity_rx).await
 }
 
 /// Run the server loop, accepting connections and spawning handlers.

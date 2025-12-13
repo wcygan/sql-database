@@ -1,7 +1,9 @@
 //! Integration tests for Raft consensus mode.
 
-use database::{Database, QueryResult, RaftConfig};
+use database::{activity_channel, Database, QueryResult, RaftConfig};
+use std::time::Duration;
 use tempfile::TempDir;
+use tokio::time::timeout;
 
 /// Test that database can be created with Raft disabled (default).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -685,4 +687,304 @@ async fn raft_data_survives_restart() {
             panic!("Expected rows result");
         }
     }
+}
+
+// =============================================================================
+// Activity Events Tests
+// =============================================================================
+
+/// Test that activity events are received for INSERT operations.
+/// Note: DDL (CREATE TABLE) doesn't go through Raft, only DML does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn activity_events_insert() {
+    let tmp = TempDir::new().unwrap();
+    let (tx, mut rx) = activity_channel();
+
+    let raft_config = RaftConfig::single_node(1).with_activity_sender(tx);
+
+    let db =
+        Database::with_raft_config(tmp.path(), "catalog.json", "wal.log", 32, Some(raft_config))
+            .await
+            .unwrap();
+
+    // Wait for initial Raft setup events
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Drain initial events (membership, blanks, etc.)
+    while timeout(Duration::from_millis(50), rx.recv()).await.is_ok() {}
+
+    // Create table (DDL doesn't go through Raft)
+    db.execute("CREATE TABLE test (id INT, name TEXT)")
+        .await
+        .unwrap();
+
+    // Insert a row (DML goes through Raft)
+    db.execute("INSERT INTO test VALUES (1, 'alice')")
+        .await
+        .unwrap();
+
+    // Receive INSERT event
+    let event = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("Should receive event")
+        .expect("Channel not closed");
+    assert!(
+        event.description.contains("INSERT"),
+        "Got: {}",
+        event.description
+    );
+    assert!(event.log_index > 0);
+    assert!(event.term > 0);
+}
+
+/// Test that activity events are received for UPDATE operations.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn activity_events_update() {
+    let tmp = TempDir::new().unwrap();
+    let (tx, mut rx) = activity_channel();
+
+    let raft_config = RaftConfig::single_node(1).with_activity_sender(tx);
+
+    let db =
+        Database::with_raft_config(tmp.path(), "catalog.json", "wal.log", 32, Some(raft_config))
+            .await
+            .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    while timeout(Duration::from_millis(50), rx.recv()).await.is_ok() {}
+
+    // DDL doesn't go through Raft
+    db.execute("CREATE TABLE items (id INT, price INT)")
+        .await
+        .unwrap();
+
+    db.execute("INSERT INTO items VALUES (1, 100)")
+        .await
+        .unwrap();
+    db.execute("INSERT INTO items VALUES (2, 200)")
+        .await
+        .unwrap();
+    // Drain INSERT events
+    let _ = timeout(Duration::from_secs(1), rx.recv()).await;
+    let _ = timeout(Duration::from_secs(1), rx.recv()).await;
+
+    // Update rows
+    let result = db
+        .execute("UPDATE items SET price = 50 WHERE id = 1")
+        .await
+        .unwrap();
+    if let QueryResult::Count { affected } = result {
+        assert_eq!(affected, 1);
+    }
+
+    // Should receive UPDATE event
+    let event = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("Should receive event")
+        .expect("Channel not closed");
+    assert!(
+        event.description.contains("UPDATE"),
+        "Got: {}",
+        event.description
+    );
+}
+
+/// Test that activity events are received for DELETE operations.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn activity_events_delete() {
+    let tmp = TempDir::new().unwrap();
+    let (tx, mut rx) = activity_channel();
+
+    let raft_config = RaftConfig::single_node(1).with_activity_sender(tx);
+
+    let db =
+        Database::with_raft_config(tmp.path(), "catalog.json", "wal.log", 32, Some(raft_config))
+            .await
+            .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    while timeout(Duration::from_millis(50), rx.recv()).await.is_ok() {}
+
+    // DDL doesn't go through Raft
+    db.execute("CREATE TABLE items (id INT)").await.unwrap();
+
+    db.execute("INSERT INTO items VALUES (1)").await.unwrap();
+    db.execute("INSERT INTO items VALUES (2)").await.unwrap();
+    // Drain INSERT events
+    let _ = timeout(Duration::from_secs(1), rx.recv()).await;
+    let _ = timeout(Duration::from_secs(1), rx.recv()).await;
+
+    // Delete a row
+    let result = db.execute("DELETE FROM items WHERE id = 1").await.unwrap();
+    if let QueryResult::Count { affected } = result {
+        assert_eq!(affected, 1);
+    }
+
+    // Should receive DELETE event
+    let event = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("Should receive event")
+        .expect("Channel not closed");
+    assert!(
+        event.description.contains("DELETE"),
+        "Got: {}",
+        event.description
+    );
+}
+
+/// Test that multiple operations generate events with increasing log indices.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn activity_events_increasing_indices() {
+    let tmp = TempDir::new().unwrap();
+    let (tx, mut rx) = activity_channel();
+
+    let raft_config = RaftConfig::single_node(1).with_activity_sender(tx);
+
+    let db =
+        Database::with_raft_config(tmp.path(), "catalog.json", "wal.log", 32, Some(raft_config))
+            .await
+            .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    while timeout(Duration::from_millis(50), rx.recv()).await.is_ok() {}
+
+    // DDL doesn't go through Raft
+    db.execute("CREATE TABLE seq (id INT)").await.unwrap();
+
+    // Insert multiple rows and verify indices increase
+    let mut last_index = 0u64;
+    for i in 1..=5 {
+        db.execute(&format!("INSERT INTO seq VALUES ({})", i))
+            .await
+            .unwrap();
+
+        let event = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("Should receive event")
+            .expect("Channel not closed");
+
+        assert!(
+            event.log_index > last_index,
+            "Log index should increase: {} > {}",
+            event.log_index,
+            last_index
+        );
+        last_index = event.log_index;
+    }
+}
+
+/// Test activity events with persistent storage.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn activity_events_persistent_storage() {
+    let tmp = TempDir::new().unwrap();
+    let (tx, mut rx) = activity_channel();
+
+    let raft_config = RaftConfig::single_node_persistent(1).with_activity_sender(tx);
+
+    let db =
+        Database::with_raft_config(tmp.path(), "catalog.json", "wal.log", 32, Some(raft_config))
+            .await
+            .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    while timeout(Duration::from_millis(50), rx.recv()).await.is_ok() {}
+
+    // DDL doesn't go through Raft
+    db.execute("CREATE TABLE persist_test (id INT)")
+        .await
+        .unwrap();
+
+    // DML goes through Raft
+    db.execute("INSERT INTO persist_test VALUES (42)")
+        .await
+        .unwrap();
+
+    let event = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("Should receive event")
+        .expect("Channel not closed");
+
+    assert!(event.description.contains("INSERT"));
+}
+
+/// Test that no events are sent when activity channel is not configured.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn no_activity_events_without_channel() {
+    let tmp = TempDir::new().unwrap();
+
+    // Create without activity channel
+    let raft_config = RaftConfig::single_node(1);
+
+    let db =
+        Database::with_raft_config(tmp.path(), "catalog.json", "wal.log", 32, Some(raft_config))
+            .await
+            .unwrap();
+
+    // Operations should succeed without panicking
+    db.execute("CREATE TABLE test (id INT)").await.unwrap();
+    db.execute("INSERT INTO test VALUES (1)").await.unwrap();
+    db.execute("UPDATE test SET id = 2 WHERE id = 1")
+        .await
+        .unwrap();
+    db.execute("DELETE FROM test WHERE id = 2").await.unwrap();
+
+    // Verify operations worked
+    let result = db.execute("SELECT * FROM test").await.unwrap();
+    if let QueryResult::Rows { rows, .. } = result {
+        assert_eq!(rows.len(), 0);
+    } else {
+        panic!("Expected rows result");
+    }
+}
+
+/// Test activity events for a full DML workflow (INSERT, UPDATE, DELETE).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn activity_events_full_workflow() {
+    let tmp = TempDir::new().unwrap();
+    let (tx, mut rx) = activity_channel();
+
+    let raft_config = RaftConfig::single_node(1).with_activity_sender(tx);
+
+    let db =
+        Database::with_raft_config(tmp.path(), "catalog.json", "wal.log", 32, Some(raft_config))
+            .await
+            .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    while timeout(Duration::from_millis(50), rx.recv()).await.is_ok() {}
+
+    // DDL doesn't go through Raft
+    db.execute("CREATE TABLE workflow (id INT, val INT)")
+        .await
+        .unwrap();
+
+    // INSERT
+    db.execute("INSERT INTO workflow VALUES (1, 100)")
+        .await
+        .unwrap();
+    let event = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(event.description.contains("INSERT"));
+
+    // UPDATE
+    db.execute("UPDATE workflow SET val = 200 WHERE id = 1")
+        .await
+        .unwrap();
+    let event = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(event.description.contains("UPDATE"));
+
+    // DELETE
+    db.execute("DELETE FROM workflow WHERE id = 1")
+        .await
+        .unwrap();
+    let event = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(event.description.contains("DELETE"));
 }

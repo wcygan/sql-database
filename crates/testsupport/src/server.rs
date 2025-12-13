@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use common::DbError;
-use database::{Database, QueryResult};
+use database::{activity_channel, ActivityReceiver, Database, QueryResult, RaftConfig};
 use protocol::{frame, ClientRequest, ErrorCode, ServerResponse};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -50,6 +50,70 @@ impl TestServer {
 }
 
 impl Drop for TestServer {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// In-process TCP server with Raft enabled for testing activity events.
+pub struct TestServerWithRaft {
+    address: String,
+    _temp_dir: TempDir,
+    task: JoinHandle<()>,
+    activity_rx: ActivityReceiver,
+}
+
+impl TestServerWithRaft {
+    /// Start a new server with Raft enabled bound to `127.0.0.1` on a random port.
+    /// Returns the server and an activity receiver for monitoring Raft events.
+    pub async fn start() -> Result<Self> {
+        let temp_dir = TempDir::new()?;
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?.to_string();
+
+        // Create activity channel
+        let (tx, rx) = activity_channel();
+
+        // Create Raft config with activity sender
+        let raft_config = RaftConfig::single_node(1).with_activity_sender(tx);
+
+        let db = Arc::new(
+            Database::with_raft_config(
+                temp_dir.path(),
+                "catalog.json",
+                "test.wal",
+                64,
+                Some(raft_config),
+            )
+            .await?,
+        );
+
+        let task = tokio::spawn(async move {
+            if let Err(e) = run_server(listener, db).await {
+                eprintln!("test server error: {e:?}");
+            }
+        });
+
+        Ok(Self {
+            address,
+            _temp_dir: temp_dir,
+            task,
+            activity_rx: rx,
+        })
+    }
+
+    /// Return the socket address clients should dial.
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+
+    /// Get a mutable reference to the activity receiver for checking events.
+    pub fn activity_receiver(&mut self) -> &mut ActivityReceiver {
+        &mut self.activity_rx
+    }
+}
+
+impl Drop for TestServerWithRaft {
     fn drop(&mut self) {
         self.task.abort();
     }

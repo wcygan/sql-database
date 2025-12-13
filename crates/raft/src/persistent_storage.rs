@@ -29,6 +29,7 @@
 //! └────────────────────────────────────┘
 //! ```
 
+use crate::command::{ActivitySender, RaftActivityEvent};
 use crate::log_storage::{ApplyHandler, StateMachineData, StoredSnapshot};
 use crate::type_config::{Entry, LogId, SnapshotMeta, TypeConfig};
 use crate::{CommandResponse, NodeId};
@@ -157,6 +158,9 @@ pub struct PersistentRaftStore {
 
     /// Optional handler for applying commands to database storage
     apply_handler: Option<ApplyHandler>,
+
+    /// Optional sender for activity events (for TUI monitoring)
+    activity_tx: Option<ActivitySender>,
 }
 
 impl PersistentRaftStore {
@@ -175,6 +179,15 @@ impl PersistentRaftStore {
     pub fn open_with_handler(
         data_dir: impl AsRef<Path>,
         apply_handler: Option<ApplyHandler>,
+    ) -> io::Result<Self> {
+        Self::open_with_handler_and_activity(data_dir, apply_handler, None)
+    }
+
+    /// Open persistent storage with an apply handler and activity sender.
+    pub fn open_with_handler_and_activity(
+        data_dir: impl AsRef<Path>,
+        apply_handler: Option<ApplyHandler>,
+        activity_tx: Option<ActivitySender>,
     ) -> io::Result<Self> {
         let data_dir = data_dir.as_ref().to_path_buf();
 
@@ -238,6 +251,7 @@ impl PersistentRaftStore {
             current_snapshot: RwLock::new(current_snapshot),
             snapshot_idx: RwLock::new(state.snapshot_idx),
             apply_handler,
+            activity_tx,
         })
     }
 
@@ -710,14 +724,25 @@ impl RaftStorage<TypeConfig> for Arc<PersistentRaftStore> {
 
         for entry in entries {
             sm.last_applied_log = Some(entry.log_id);
+            let log_index = entry.log_id.index;
+            let term = entry.log_id.leader_id.term;
 
             match &entry.payload {
                 EntryPayload::Blank => {
+                    // Send activity event for blank entry
+                    if let Some(tx) = &self.activity_tx {
+                        let _ = tx.send(RaftActivityEvent::blank(log_index, term));
+                    }
                     res.push(CommandResponse::Ddl);
                 }
                 EntryPayload::Normal(cmd) => {
                     // Record the command
                     sm.applied_commands.push(cmd.clone());
+
+                    // Send activity event
+                    if let Some(tx) = &self.activity_tx {
+                        let _ = tx.send(RaftActivityEvent::from_command(log_index, term, cmd));
+                    }
 
                     // Apply via handler if set
                     if let Some(handler) = &self.apply_handler {
@@ -727,6 +752,10 @@ impl RaftStorage<TypeConfig> for Arc<PersistentRaftStore> {
                     }
                 }
                 EntryPayload::Membership(mem) => {
+                    // Send activity event for membership change
+                    if let Some(tx) = &self.activity_tx {
+                        let _ = tx.send(RaftActivityEvent::membership(log_index, term));
+                    }
                     sm.last_membership = StoredMembership::new(Some(entry.log_id), mem.clone());
                     res.push(CommandResponse::Ddl);
                 }

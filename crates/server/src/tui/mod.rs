@@ -11,7 +11,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use database::Database;
+use database::{ActivityReceiver, Database};
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use std::sync::Arc;
@@ -46,6 +46,7 @@ pub fn restore() -> Result<()> {
 /// This spawns background tasks for:
 /// - TCP server accepting connections
 /// - Raft metrics polling
+/// - Raft activity event receiver (if provided)
 /// - Terminal event handling
 ///
 /// The main loop handles rendering and event dispatch.
@@ -53,6 +54,7 @@ pub async fn run_tui(
     db: Arc<Database>,
     listener: TcpListener,
     state: SharedTuiState,
+    activity_rx: Option<ActivityReceiver>,
 ) -> Result<()> {
     // Set up panic hook to restore terminal
     let original_hook = std::panic::take_hook();
@@ -88,6 +90,26 @@ pub async fn run_tui(
             _ = shutdown_rx2.recv() => {}
         }
     });
+
+    // Spawn Raft activity receiver task (if channel provided)
+    if let Some(mut rx) = activity_rx {
+        let state_clone = state.clone();
+        let mut shutdown_rx3 = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Some(event) = rx.recv() => {
+                        let mut state_lock = state_clone.write().await;
+                        state_lock.add_activity(
+                            format!("[{}:{}] {}", event.term, event.log_index, event.description),
+                            ActivityKind::Raft,
+                        );
+                    }
+                    _ = shutdown_rx3.recv() => break,
+                }
+            }
+        });
+    }
 
     // Main event loop
     let mut tick_interval = tokio::time::interval(TICK_RATE);

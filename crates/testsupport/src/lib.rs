@@ -75,7 +75,7 @@ pub mod prelude {
     pub use crate::context::*;
     pub use crate::fixtures::*;
     pub use crate::runner::*;
-    pub use crate::server::TestServer;
+    pub use crate::server::{TestServer, TestServerWithRaft};
 
     // Re-export test setup macros
     pub use crate::row;
