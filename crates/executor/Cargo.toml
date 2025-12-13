@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 bincode = { workspace = true }
 bon = { workspace = true }
+btree = { workspace = true }
 buffer = { workspace = true }
 catalog = { workspace = true }
 common = { workspace = true }

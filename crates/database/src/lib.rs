@@ -661,6 +661,9 @@ impl Database {
     }
 
     /// Execute CREATE INDEX statement.
+    ///
+    /// Creates the index metadata in the catalog and builds the B+Tree index
+    /// by scanning all existing rows in the table.
     async fn execute_create_index(
         &self,
         name: String,
@@ -669,11 +672,13 @@ impl Database {
     ) -> Result<QueryResult> {
         let catalog = self.catalog.clone();
         let catalog_path = self.catalog_path.clone();
+        let data_dir = self.data_dir.clone();
 
         tokio::task::spawn_blocking(move || {
             let mut catalog_lock = catalog.blocking_write();
 
-            catalog_lock
+            // Create the index metadata
+            let index_id = catalog_lock
                 .create_index()
                 .table_name(&table)
                 .index_name(&name)
@@ -681,6 +686,74 @@ impl Database {
                 .kind(IndexKind::BTree)
                 .call()
                 .map_err(anyhow::Error::from)?;
+
+            // Get table metadata for building the index
+            let table_meta = catalog_lock.table(&table).map_err(anyhow::Error::from)?;
+            let table_id = table_meta.id;
+            let index_meta = table_meta.index(&name).map_err(anyhow::Error::from)?;
+            let column_ordinals: Vec<usize> =
+                index_meta.columns.iter().map(|c| *c as usize).collect();
+
+            // Build the B+Tree index file
+            let index_path = data_dir.join(format!("index_{}.idx", index_id.0));
+            let mut btree_index = btree::BTreeIndex::create(&index_path, index_id)
+                .map_err(|e| anyhow::anyhow!("failed to create B+Tree index: {}", e))?;
+
+            // Scan existing rows and insert into the index
+            let heap_path = data_dir.join(format!("{}.heap", table));
+            if heap_path.exists() {
+                let mut heap_file = storage::HeapFile::open(&heap_path, table_id.0)
+                    .map_err(|e| anyhow::anyhow!("failed to open heap file: {}", e))?;
+
+                // Iterate through all pages and slots
+                let mut page_id = 0u64;
+                loop {
+                    let mut found_in_page = false;
+                    for slot in 0..100u16 {
+                        let rid = common::RecordId {
+                            page_id: common::PageId(page_id),
+                            slot,
+                        };
+
+                        match heap_file.get(rid) {
+                            Ok(row) => {
+                                found_in_page = true;
+                                // Extract key columns from the row
+                                let key: Vec<types::Value> = column_ordinals
+                                    .iter()
+                                    .filter_map(|&ord| row.values.get(ord).cloned())
+                                    .collect();
+
+                                btree_index.insert(key, rid).map_err(|e| {
+                                    anyhow::anyhow!("failed to insert into index: {}", e)
+                                })?;
+                            }
+                            Err(e) => {
+                                // Check if this is an empty slot or end of pages
+                                let msg = e.to_string();
+                                if msg.contains("page") || msg.contains("beyond") {
+                                    break;
+                                }
+                                // Empty slot, continue to next slot
+                            }
+                        }
+                    }
+
+                    if !found_in_page {
+                        break;
+                    }
+                    page_id += 1;
+
+                    // Safety limit
+                    if page_id > 100_000 {
+                        break;
+                    }
+                }
+            }
+
+            btree_index
+                .flush()
+                .map_err(|e| anyhow::anyhow!("failed to flush B+Tree index: {}", e))?;
 
             catalog_lock
                 .save(&catalog_path)
@@ -692,19 +765,29 @@ impl Database {
     }
 
     /// Execute DROP INDEX statement.
+    ///
+    /// Removes the index metadata from the catalog and deletes the physical
+    /// B+Tree index file.
     async fn execute_drop_index(&self, name: String) -> Result<QueryResult> {
         let catalog = self.catalog.clone();
         let catalog_path = self.catalog_path.clone();
+        let data_dir = self.data_dir.clone();
 
         tokio::task::spawn_blocking(move || {
             let mut catalog_lock = catalog.blocking_write();
 
-            let table_name = catalog_lock
+            // Find the table and index
+            let (table_name, index_id) = catalog_lock
                 .tables()
-                .find(|table| table.index(&name).is_ok())
-                .map(|table| table.name.clone())
+                .find_map(|table| {
+                    table
+                        .index(&name)
+                        .ok()
+                        .map(|idx| (table.name.clone(), idx.id))
+                })
                 .ok_or_else(|| anyhow::anyhow!("index '{}' not found", name))?;
 
+            // Drop from catalog
             catalog_lock
                 .drop_index(&table_name, &name)
                 .map_err(anyhow::Error::from)?;
@@ -712,6 +795,14 @@ impl Database {
             catalog_lock
                 .save(&catalog_path)
                 .map_err(anyhow::Error::from)?;
+
+            // Delete the physical index file
+            let index_path = data_dir.join(format!("index_{}.idx", index_id.0));
+            if index_path.exists() {
+                fs::remove_file(&index_path).with_context(|| {
+                    format!("failed to remove index file {}", index_path.display())
+                })?;
+            }
 
             Ok(QueryResult::Empty)
         })

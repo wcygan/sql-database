@@ -342,6 +342,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "btree"
+version = "0.1.0"
+dependencies = [
+ "bincode 2.0.1",
+ "catalog",
+ "common",
+ "pretty_assertions",
+ "proptest",
+ "serde",
+ "storage",
+ "tempfile",
+ "thiserror 1.0.69",
+ "types",
+]
+
+[[package]]
 name = "buffer"
 version = "0.1.0"
 dependencies = [
@@ -723,6 +739,7 @@ name = "database"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "btree",
  "buffer",
  "catalog",
  "common",
@@ -840,6 +857,7 @@ version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "bon",
+ "btree",
  "buffer",
  "catalog",
  "common",

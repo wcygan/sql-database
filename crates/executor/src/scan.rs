@@ -1,10 +1,14 @@
 //! Scan operators: SeqScan and IndexScan.
 
+use crate::filter::eval_resolved_expr;
 use crate::{ExecutionContext, Executor};
+use btree::BTreeIndex;
+use catalog::IndexId;
 use common::{DbResult, ExecutionStats, PageId, RecordId, Row, TableId};
 use planner::IndexPredicate;
 use std::time::Instant;
 use storage::HeapTable;
+use types::Value;
 
 /// Sequential scan operator - iterates all rows in a table.
 ///
@@ -139,19 +143,21 @@ impl Executor for SeqScanExec {
     }
 }
 
-/// Index scan operator - uses B+Tree index to find rows (stub for future).
+/// Index scan operator - uses B+Tree index to find rows efficiently.
 ///
-/// Currently falls back to sequential scan. Will be implemented when
-/// the index crate is added.
+/// Uses a B+Tree index to find matching RecordIds, then fetches the
+/// actual rows from the heap table.
 pub struct IndexScanExec {
-    #[allow(dead_code)]
     table_id: TableId,
-    #[allow(dead_code)]
     index_name: String,
-    #[allow(dead_code)]
     predicate: IndexPredicate,
     schema: Vec<String>,
-    seq_scan: SeqScanExec,
+    /// RecordIds matching the predicate (populated on open)
+    matching_rids: Vec<RecordId>,
+    /// Current position in the matching_rids vector
+    cursor: usize,
+    /// Execution statistics
+    stats: ExecutionStats,
 }
 
 #[bon::bon]
@@ -174,37 +180,110 @@ impl IndexScanExec {
         predicate: IndexPredicate,
         schema: Vec<String>,
     ) -> Self {
-        // TODO: When index crate is implemented, use B+Tree here
-        let seq_scan = SeqScanExec::new(table_id, schema.clone());
-
         Self {
             table_id,
             index_name,
             predicate,
             schema,
-            seq_scan,
+            matching_rids: Vec::new(),
+            cursor: 0,
+            stats: ExecutionStats::default(),
+        }
+    }
+
+    /// Find the index ID from the catalog.
+    fn find_index_id(&self, ctx: &ExecutionContext) -> DbResult<IndexId> {
+        let table_meta = ctx.catalog.table_by_id(self.table_id)?;
+        let index_meta = table_meta.index(&self.index_name)?;
+        Ok(index_meta.id)
+    }
+
+    /// Evaluate the predicate value to get the search key.
+    fn eval_predicate_value(&self, pred: &planner::ResolvedExpr) -> DbResult<Value> {
+        // For index lookups, we need a literal value
+        // Evaluate against an empty row since we only support literals
+        let empty_row = Row::new(Vec::new());
+        eval_resolved_expr(pred, &empty_row)
+    }
+
+    /// Query the B+Tree index for matching RecordIds.
+    fn query_index(&self, ctx: &ExecutionContext) -> DbResult<Vec<RecordId>> {
+        let index_id = self.find_index_id(ctx)?;
+        let index_path = ctx.data_dir.join(format!("index_{}.idx", index_id.0));
+
+        // Check if index file exists
+        if !index_path.exists() {
+            return Err(common::DbError::Storage(format!(
+                "index file not found: {}",
+                index_path.display()
+            )));
+        }
+
+        let mut btree = BTreeIndex::open(&index_path, index_id)?;
+
+        match &self.predicate {
+            IndexPredicate::Eq { value, .. } => {
+                let key_value = self.eval_predicate_value(value)?;
+                btree.search(&[key_value])
+            }
+            IndexPredicate::Range { low, high, .. } => {
+                let low_key = self.eval_predicate_value(low)?;
+                let high_key = self.eval_predicate_value(high)?;
+                btree.range_scan(Some(&[low_key]), Some(&[high_key]))
+            }
         }
     }
 }
 
 impl Executor for IndexScanExec {
     fn open(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
-        // TODO: Open B+Tree index
-        self.seq_scan.open(ctx)
+        let start = Instant::now();
+
+        // Reset state
+        self.cursor = 0;
+        self.stats = ExecutionStats::default();
+
+        // Query the index for matching RecordIds
+        self.matching_rids = self.query_index(ctx)?;
+
+        self.stats.open_time = start.elapsed();
+        Ok(())
     }
 
     fn next(&mut self, ctx: &mut ExecutionContext) -> DbResult<Option<Row>> {
-        // TODO: Use index to find matching RIDs, then fetch from heap
-        self.seq_scan.next(ctx)
+        let start = Instant::now();
+
+        if self.cursor >= self.matching_rids.len() {
+            self.stats.total_next_time += start.elapsed();
+            return Ok(None);
+        }
+
+        let rid = self.matching_rids[self.cursor];
+        self.cursor += 1;
+
+        // Fetch the actual row from the heap table
+        let mut heap_table = ctx.heap_table(self.table_id)?;
+        let row = heap_table.get(rid)?;
+
+        self.stats.rows_produced += 1;
+        self.stats.total_next_time += start.elapsed();
+
+        Ok(Some(row))
     }
 
-    fn close(&mut self, ctx: &mut ExecutionContext) -> DbResult<()> {
-        // TODO: Close B+Tree index
-        self.seq_scan.close(ctx)
+    fn close(&mut self, _ctx: &mut ExecutionContext) -> DbResult<()> {
+        let start = Instant::now();
+        self.matching_rids.clear();
+        self.stats.close_time = start.elapsed();
+        Ok(())
     }
 
     fn schema(&self) -> &[String] {
         &self.schema
+    }
+
+    fn stats(&self) -> Option<&ExecutionStats> {
+        Some(&self.stats)
     }
 }
 
@@ -248,7 +327,8 @@ fn compute_num_pages(heap_table: &mut impl HeapTable) -> DbResult<u64> {
 mod tests {
     use super::*;
     use crate::tests::helpers::{
-        assert_exhausted, assert_next_row, create_test_catalog, setup_test_context,
+        assert_exhausted, assert_next_row, create_context_from_catalog, create_test_catalog,
+        setup_test_catalog_and_dir, setup_test_context,
     };
     use catalog::Column;
     use planner::ResolvedExpr;
@@ -454,28 +534,22 @@ mod tests {
     }
 
     #[test]
-    fn index_scan_delegates_to_seq_scan() {
+    fn index_scan_requires_existing_index() {
         let (mut ctx, _temp) = setup_test_context();
         let table_id = TableId(1);
 
         // Insert rows
-        let rows = vec![
-            Row::new(vec![
-                Value::Int(1),
-                Value::Text("alice".into()),
-                Value::Bool(true),
-            ]),
-            Row::new(vec![
-                Value::Int(2),
-                Value::Text("bob".into()),
-                Value::Bool(false),
-            ]),
-        ];
+        let rows = vec![Row::new(vec![
+            Value::Int(1),
+            Value::Text("alice".into()),
+            Value::Bool(true),
+        ])];
         insert_test_rows(&mut ctx, table_id, rows).unwrap();
 
+        // Try to use a non-existent index
         let mut scan = IndexScanExec::builder()
             .table_id(table_id)
-            .index_name("idx_users_id".into())
+            .index_name("idx_nonexistent".into())
             .predicate(IndexPredicate::Eq {
                 col: 0,
                 value: ResolvedExpr::Literal(Value::Int(1)),
@@ -483,28 +557,9 @@ mod tests {
             .schema(vec!["id".into(), "name".into(), "active".into()])
             .build();
 
-        scan.open(&mut ctx).unwrap();
-        // Should still return all rows (stub implementation uses SeqScan)
-        assert_next_row(
-            &mut scan,
-            &mut ctx,
-            Row::new(vec![
-                Value::Int(1),
-                Value::Text("alice".into()),
-                Value::Bool(true),
-            ]),
-        );
-        assert_next_row(
-            &mut scan,
-            &mut ctx,
-            Row::new(vec![
-                Value::Int(2),
-                Value::Text("bob".into()),
-                Value::Bool(false),
-            ]),
-        );
-        assert_exhausted(&mut scan, &mut ctx);
-        scan.close(&mut ctx).unwrap();
+        // Should fail because index doesn't exist
+        let result = scan.open(&mut ctx);
+        assert!(result.is_err(), "expected error for non-existent index");
     }
 
     #[test]
@@ -525,47 +580,32 @@ mod tests {
     }
 
     #[test]
-    fn index_scan_open_succeeds() {
-        let (mut ctx, _temp) = setup_test_context();
+    fn index_scan_with_btree_index() {
+        let (catalog, temp) = setup_test_catalog_and_dir();
         let table_id = TableId(1);
 
-        let mut scan = IndexScanExec::builder()
-            .table_id(table_id)
-            .index_name("idx_users_id".into())
-            .predicate(IndexPredicate::Eq {
-                col: 0,
-                value: ResolvedExpr::Literal(Value::Int(1)),
-            })
-            .schema(vec!["id".into()])
-            .build();
+        // Create an index on the "id" column BEFORE creating context
+        catalog
+            .create_index()
+            .table_name("users")
+            .index_name("idx_users_id")
+            .columns(&["id"])
+            .kind(catalog::IndexKind::BTree)
+            .call()
+            .unwrap();
 
-        assert!(scan.open(&mut ctx).is_ok());
-        scan.close(&mut ctx).unwrap();
-    }
+        // Build the empty index file first
+        let index_id = catalog
+            .table("users")
+            .unwrap()
+            .index("idx_users_id")
+            .unwrap()
+            .id;
+        let index_path = temp.path().join(format!("index_{}.idx", index_id.0));
+        let mut btree = btree::BTreeIndex::create(&index_path, index_id).unwrap();
 
-    #[test]
-    fn index_scan_close_succeeds() {
-        let (mut ctx, _temp) = setup_test_context();
-        let table_id = TableId(1);
-
-        let mut scan = IndexScanExec::builder()
-            .table_id(table_id)
-            .index_name("idx_users_id".into())
-            .predicate(IndexPredicate::Eq {
-                col: 0,
-                value: ResolvedExpr::Literal(Value::Int(1)),
-            })
-            .schema(vec!["id".into()])
-            .build();
-
-        scan.open(&mut ctx).unwrap();
-        assert!(scan.close(&mut ctx).is_ok());
-    }
-
-    #[test]
-    fn index_scan_with_range_predicate() {
-        let (mut ctx, _temp) = setup_test_context();
-        let table_id = TableId(1);
+        // Now create the context
+        let mut ctx = create_context_from_catalog(catalog, &temp);
 
         // Insert rows
         let rows = vec![
@@ -587,28 +627,133 @@ mod tests {
         ];
         insert_test_rows(&mut ctx, table_id, rows).unwrap();
 
+        // Scan heap and add entries to index
+        let heap_path = temp.path().join("users.heap");
+        let mut heap = storage::HeapFile::open(&heap_path, table_id.0).unwrap();
+        for page_id in 0..10u64 {
+            for slot in 0..100u16 {
+                let rid = common::RecordId {
+                    page_id: common::PageId(page_id),
+                    slot,
+                };
+                if let Ok(row) = heap.get(rid) {
+                    let key = vec![row.values[0].clone()]; // "id" column
+                    btree.insert(key, rid).unwrap();
+                }
+            }
+        }
+        btree.flush().unwrap();
+
+        // Now test the IndexScanExec
+        let mut scan = IndexScanExec::builder()
+            .table_id(table_id)
+            .index_name("idx_users_id".into())
+            .predicate(IndexPredicate::Eq {
+                col: 0,
+                value: ResolvedExpr::Literal(Value::Int(2)),
+            })
+            .schema(vec!["id".into(), "name".into(), "active".into()])
+            .build();
+
+        scan.open(&mut ctx).unwrap();
+        // Should return only the row with id=2
+        assert_next_row(
+            &mut scan,
+            &mut ctx,
+            Row::new(vec![
+                Value::Int(2),
+                Value::Text("bob".into()),
+                Value::Bool(false),
+            ]),
+        );
+        assert_exhausted(&mut scan, &mut ctx);
+        scan.close(&mut ctx).unwrap();
+    }
+
+    #[test]
+    fn index_scan_range_with_btree() {
+        let (catalog, temp) = setup_test_catalog_and_dir();
+        let table_id = TableId(1);
+
+        // Create an index on the "id" column
+        catalog
+            .create_index()
+            .table_name("users")
+            .index_name("idx_users_id")
+            .columns(&["id"])
+            .kind(catalog::IndexKind::BTree)
+            .call()
+            .unwrap();
+
+        // Build the empty index file
+        let index_id = catalog
+            .table("users")
+            .unwrap()
+            .index("idx_users_id")
+            .unwrap()
+            .id;
+        let index_path = temp.path().join(format!("index_{}.idx", index_id.0));
+        let mut btree = btree::BTreeIndex::create(&index_path, index_id).unwrap();
+
+        // Now create context
+        let mut ctx = create_context_from_catalog(catalog, &temp);
+
+        // Insert rows
+        let rows = vec![
+            Row::new(vec![
+                Value::Int(1),
+                Value::Text("alice".into()),
+                Value::Bool(true),
+            ]),
+            Row::new(vec![
+                Value::Int(2),
+                Value::Text("bob".into()),
+                Value::Bool(false),
+            ]),
+            Row::new(vec![
+                Value::Int(3),
+                Value::Text("carol".into()),
+                Value::Bool(true),
+            ]),
+            Row::new(vec![
+                Value::Int(4),
+                Value::Text("dave".into()),
+                Value::Bool(false),
+            ]),
+        ];
+        insert_test_rows(&mut ctx, table_id, rows).unwrap();
+
+        // Scan heap and add entries to index
+        let heap_path = temp.path().join("users.heap");
+        let mut heap = storage::HeapFile::open(&heap_path, table_id.0).unwrap();
+        for page_id in 0..10u64 {
+            for slot in 0..100u16 {
+                let rid = common::RecordId {
+                    page_id: common::PageId(page_id),
+                    slot,
+                };
+                if let Ok(row) = heap.get(rid) {
+                    let key = vec![row.values[0].clone()];
+                    btree.insert(key, rid).unwrap();
+                }
+            }
+        }
+        btree.flush().unwrap();
+
+        // Test range scan [2, 3]
         let mut scan = IndexScanExec::builder()
             .table_id(table_id)
             .index_name("idx_users_id".into())
             .predicate(IndexPredicate::Range {
                 col: 0,
-                low: ResolvedExpr::Literal(Value::Int(1)),
+                low: ResolvedExpr::Literal(Value::Int(2)),
                 high: ResolvedExpr::Literal(Value::Int(3)),
             })
             .schema(vec!["id".into(), "name".into(), "active".into()])
             .build();
 
         scan.open(&mut ctx).unwrap();
-        // Should return all rows (stub implementation uses SeqScan)
-        assert_next_row(
-            &mut scan,
-            &mut ctx,
-            Row::new(vec![
-                Value::Int(1),
-                Value::Text("alice".into()),
-                Value::Bool(true),
-            ]),
-        );
+        // Should return rows with id in [2, 3]
         assert_next_row(
             &mut scan,
             &mut ctx,
@@ -652,9 +797,32 @@ mod tests {
     }
 
     #[test]
-    fn index_scan_empty_table() {
-        let (mut ctx, _temp) = setup_test_context();
+    fn index_scan_empty_table_with_index() {
+        let (catalog, temp) = setup_test_catalog_and_dir();
         let table_id = TableId(1);
+
+        // Create an index on the empty table
+        catalog
+            .create_index()
+            .table_name("users")
+            .index_name("idx_users_id")
+            .columns(&["id"])
+            .kind(catalog::IndexKind::BTree)
+            .call()
+            .unwrap();
+
+        // Build an empty index file
+        let index_id = catalog
+            .table("users")
+            .unwrap()
+            .index("idx_users_id")
+            .unwrap()
+            .id;
+        let index_path = temp.path().join(format!("index_{}.idx", index_id.0));
+        let mut btree = btree::BTreeIndex::create(&index_path, index_id).unwrap();
+        btree.flush().unwrap();
+
+        let mut ctx = create_context_from_catalog(catalog, &temp);
 
         let mut scan = IndexScanExec::builder()
             .table_id(table_id)
@@ -672,9 +840,31 @@ mod tests {
     }
 
     #[test]
-    fn index_scan_open_resets_state() {
-        let (mut ctx, _temp) = setup_test_context();
+    fn index_scan_open_resets_state_with_index() {
+        let (catalog, temp) = setup_test_catalog_and_dir();
         let table_id = TableId(1);
+
+        // Create an index on the "id" column first (before inserting rows)
+        catalog
+            .create_index()
+            .table_name("users")
+            .index_name("idx_users_id")
+            .columns(&["id"])
+            .kind(catalog::IndexKind::BTree)
+            .call()
+            .unwrap();
+
+        // Get index metadata
+        let index_id = catalog
+            .table("users")
+            .unwrap()
+            .index("idx_users_id")
+            .unwrap()
+            .id;
+        let index_path = temp.path().join(format!("index_{}.idx", index_id.0));
+
+        // Create context (catalog becomes immutable after this)
+        let mut ctx = create_context_from_catalog(catalog, &temp);
 
         // Insert rows
         let rows = vec![
@@ -690,6 +880,24 @@ mod tests {
             ]),
         ];
         insert_test_rows(&mut ctx, table_id, rows).unwrap();
+
+        // Build the index file by scanning the heap
+        let mut btree = btree::BTreeIndex::create(&index_path, index_id).unwrap();
+        let heap_path = temp.path().join("users.heap");
+        let mut heap = storage::HeapFile::open(&heap_path, table_id.0).unwrap();
+        for page_id in 0..10u64 {
+            for slot in 0..100u16 {
+                let rid = common::RecordId {
+                    page_id: common::PageId(page_id),
+                    slot,
+                };
+                if let Ok(row) = heap.get(rid) {
+                    let key = vec![row.values[0].clone()];
+                    btree.insert(key, rid).unwrap();
+                }
+            }
+        }
+        btree.flush().unwrap();
 
         let mut scan = IndexScanExec::builder()
             .table_id(table_id)
@@ -712,8 +920,9 @@ mod tests {
                 Value::Bool(true),
             ]),
         );
+        assert_exhausted(&mut scan, &mut ctx);
 
-        // Reset with open
+        // Reset with open should reset cursor
         scan.open(&mut ctx).unwrap();
         assert_next_row(
             &mut scan,
@@ -722,15 +931,6 @@ mod tests {
                 Value::Int(1),
                 Value::Text("alice".into()),
                 Value::Bool(true),
-            ]),
-        );
-        assert_next_row(
-            &mut scan,
-            &mut ctx,
-            Row::new(vec![
-                Value::Int(2),
-                Value::Text("bob".into()),
-                Value::Bool(false),
             ]),
         );
         assert_exhausted(&mut scan, &mut ctx);

@@ -153,6 +153,38 @@ pub fn setup_test_context() -> (ExecutionContext<'static>, TempDir) {
     (ctx, temp_dir)
 }
 
+/// Set up a catalog and TempDir for testing before creating an ExecutionContext.
+///
+/// This pattern allows mutating the catalog (e.g., creating indexes) before
+/// passing it to ExecutionContext.
+///
+/// # Example
+/// ```ignore
+/// let (catalog, temp) = setup_test_catalog_and_dir();
+/// // Mutate catalog as needed
+/// catalog.create_index()...;
+/// // Then create context
+/// let ctx = create_context_from_catalog(catalog, &temp);
+/// ```
+pub fn setup_test_catalog_and_dir() -> (&'static mut Catalog, TempDir) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let catalog = create_test_catalog();
+    let catalog = Box::leak(Box::new(catalog));
+    (catalog, temp_dir)
+}
+
+/// Create an ExecutionContext from a pre-configured catalog.
+pub fn create_context_from_catalog(
+    catalog: &'static mut Catalog,
+    temp_dir: &TempDir,
+) -> ExecutionContext<'static> {
+    let pager = Box::leak(Box::new(buffer::FilePager::new(temp_dir.path(), 10)));
+    let wal = Box::leak(Box::new(
+        wal::Wal::open(temp_dir.path().join("test.wal")).unwrap(),
+    ));
+    ExecutionContext::new(catalog, pager, wal, temp_dir.path().into())
+}
+
 /// Create a row with boolean values.
 #[allow(dead_code)]
 pub fn bool_row(values: &[bool]) -> Row {

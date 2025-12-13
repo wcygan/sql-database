@@ -1,0 +1,18 @@
+[package]
+name = "btree"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { workspace = true }
+types = { workspace = true }
+storage = { workspace = true }
+catalog = { workspace = true }
+bincode = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+proptest = { workspace = true }
+pretty_assertions = { workspace = true }

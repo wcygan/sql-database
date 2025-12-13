@@ -1,12 +1,123 @@
 //! DML operators: Insert, Update, Delete.
 
 use crate::{filter::eval_resolved_expr, ExecutionContext, Executor};
-use common::{ColumnId, DbResult, ExecutionStats, Row, TableId};
+use btree::BTreeIndex;
+use catalog::IndexKind;
+use common::{ColumnId, DbResult, ExecutionStats, RecordId, Row, TableId};
 use planner::ResolvedExpr;
 use std::time::Instant;
 use storage::HeapTable;
 use types::Value;
 use wal::WalRecord;
+
+/// Update all B+Tree indexes for a table after an INSERT.
+fn update_indexes_after_insert(
+    ctx: &ExecutionContext,
+    table_id: TableId,
+    row: &Row,
+    rid: RecordId,
+) -> DbResult<()> {
+    let table_meta = ctx.catalog.table_by_id(table_id)?;
+
+    for index_meta in &table_meta.indexes {
+        if !matches!(index_meta.kind, IndexKind::BTree) {
+            continue;
+        }
+
+        // Extract key columns from the row
+        let key: Vec<Value> = index_meta
+            .columns
+            .iter()
+            .filter_map(|&col_id| row.values.get(col_id as usize).cloned())
+            .collect();
+
+        // Open and update the index
+        let index_path = ctx.data_dir.join(format!("index_{}.idx", index_meta.id.0));
+        if index_path.exists() {
+            let mut btree = BTreeIndex::open(&index_path, index_meta.id)?;
+            btree.insert(key, rid)?;
+            btree.flush()?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Update all B+Tree indexes for a table after a DELETE.
+fn update_indexes_after_delete(
+    ctx: &ExecutionContext,
+    table_id: TableId,
+    row: &Row,
+    rid: RecordId,
+) -> DbResult<()> {
+    let table_meta = ctx.catalog.table_by_id(table_id)?;
+
+    for index_meta in &table_meta.indexes {
+        if !matches!(index_meta.kind, IndexKind::BTree) {
+            continue;
+        }
+
+        // Extract key columns from the row
+        let key: Vec<Value> = index_meta
+            .columns
+            .iter()
+            .filter_map(|&col_id| row.values.get(col_id as usize).cloned())
+            .collect();
+
+        // Open and update the index
+        let index_path = ctx.data_dir.join(format!("index_{}.idx", index_meta.id.0));
+        if index_path.exists() {
+            let mut btree = BTreeIndex::open(&index_path, index_meta.id)?;
+            btree.delete(&key, rid)?;
+            btree.flush()?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Update all B+Tree indexes for a table after an UPDATE.
+/// This removes the old entry and inserts the new one.
+fn update_indexes_after_update(
+    ctx: &ExecutionContext,
+    table_id: TableId,
+    old_row: &Row,
+    new_row: &Row,
+    old_rid: RecordId,
+    new_rid: RecordId,
+) -> DbResult<()> {
+    let table_meta = ctx.catalog.table_by_id(table_id)?;
+
+    for index_meta in &table_meta.indexes {
+        if !matches!(index_meta.kind, IndexKind::BTree) {
+            continue;
+        }
+
+        // Extract old and new key columns
+        let old_key: Vec<Value> = index_meta
+            .columns
+            .iter()
+            .filter_map(|&col_id| old_row.values.get(col_id as usize).cloned())
+            .collect();
+
+        let new_key: Vec<Value> = index_meta
+            .columns
+            .iter()
+            .filter_map(|&col_id| new_row.values.get(col_id as usize).cloned())
+            .collect();
+
+        // Open and update the index
+        let index_path = ctx.data_dir.join(format!("index_{}.idx", index_meta.id.0));
+        if index_path.exists() {
+            let mut btree = BTreeIndex::open(&index_path, index_meta.id)?;
+            btree.delete(&old_key, old_rid)?;
+            btree.insert(new_key, new_rid)?;
+            btree.flush()?;
+        }
+    }
+
+    Ok(())
+}
 
 /// Insert operator - inserts rows into a table with WAL logging.
 ///
@@ -85,7 +196,10 @@ impl Executor for InsertExec {
             pk_index.insert(key, rid)?;
         }
 
-        // 4. Log to WAL after successful insert
+        // 4. Update secondary indexes
+        update_indexes_after_insert(ctx, self.table_id, &row, rid)?;
+
+        // 5. Log to WAL after successful insert
         let wal_record = WalRecord::Insert {
             table: self.table_id,
             row: row_values,
@@ -93,7 +207,7 @@ impl Executor for InsertExec {
         };
         ctx.log_dml(wal_record)?;
 
-        // 5. Save PK index to disk
+        // 6. Save PK index to disk
         ctx.save_pk_index(self.table_id)?;
 
         // Return single row with affected count
@@ -238,6 +352,9 @@ impl Executor for UpdateExec {
             };
             new_row.set_rid(Some(new_rid));
 
+            // Update secondary indexes
+            update_indexes_after_update(ctx, self.table_id, &old_row, &new_row, rid, new_rid)?;
+
             ctx.log_dml(WalRecord::Update {
                 table: self.table_id,
                 rid: new_rid,
@@ -329,6 +446,9 @@ impl Executor for DeleteExec {
                 let key = pk_index.extract_key(&row)?;
                 pk_index.remove(&key);
             }
+
+            // Remove from secondary indexes
+            update_indexes_after_delete(ctx, self.table_id, &row, rid)?;
 
             {
                 let mut heap_table = ctx.heap_table(self.table_id)?;

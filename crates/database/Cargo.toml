@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
+btree = { workspace = true }
 catalog = { workspace = true }
 common = { workspace = true }
 buffer = { workspace = true }
