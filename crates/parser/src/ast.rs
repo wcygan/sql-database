@@ -22,6 +22,46 @@ pub struct OrderByExpr {
     pub direction: SortDirection,
 }
 
+/// Join type for multi-table queries.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum JoinType {
+    Inner,
+}
+
+/// Table reference with optional alias.
+///
+/// Examples:
+/// - `TableRef { name: "users", alias: None }` - `users`
+/// - `TableRef { name: "users", alias: Some("u") }` - `users u` or `users AS u`
+#[derive(Clone, Debug, PartialEq)]
+pub struct TableRef {
+    /// Table name.
+    pub name: String,
+    /// Optional alias (e.g., `u` in `users u`).
+    pub alias: Option<String>,
+}
+
+impl TableRef {
+    /// Returns the alias if present, otherwise the table name.
+    /// This is used for schema prefixing in joins.
+    pub fn effective_name(&self) -> &str {
+        self.alias.as_deref().unwrap_or(&self.name)
+    }
+}
+
+/// Join clause for multi-table queries.
+///
+/// Represents `JOIN table ON condition`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct JoinClause {
+    /// Type of join (INNER, LEFT, etc.)
+    pub join_type: JoinType,
+    /// Right-hand table reference.
+    pub table: TableRef,
+    /// Join condition (ON clause).
+    pub condition: Expr,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement {
     CreateTable {
@@ -47,7 +87,10 @@ pub enum Statement {
     },
     Select {
         columns: Vec<SelectItem>,
-        table: String,
+        /// Primary FROM table with optional alias.
+        from: TableRef,
+        /// JOIN clauses (may be empty for single-table queries).
+        joins: Vec<JoinClause>,
         selection: Option<Expr>,
         order_by: Vec<OrderByExpr>,
         limit: Option<u64>,

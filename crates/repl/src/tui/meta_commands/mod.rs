@@ -3,12 +3,14 @@
 //! Meta commands are special commands that start with `.` and provide
 //! functionality like showing help, listing tables, and displaying schemas.
 
+mod demo;
 mod examples;
 mod help;
 mod reset;
 mod schema;
 mod tables;
 
+pub use demo::DemoCommand;
 pub use examples::ExamplesCommand;
 pub use help::HelpCommand;
 pub use reset::ResetCommand;
@@ -62,6 +64,7 @@ pub fn parse_command(input: &str) -> Result<Box<dyn MetaCommand>, String> {
             Ok(Box::new(SchemaCommand::new(table)))
         }
         Some(".examples") => Ok(Box::new(ExamplesCommand)),
+        Some(".demo") => Ok(Box::new(DemoCommand)),
         Some(".reset") => Ok(Box::new(ResetCommand)),
         Some(cmd) => Err(format!("Unknown command: {}. Try .help", cmd)),
         None => Err("Empty command".to_string()),
@@ -100,6 +103,12 @@ mod tests {
     fn test_parse_examples_command() {
         let cmd = parse_command(".examples").expect("should parse .examples");
         assert_eq!(cmd.name(), ".examples");
+    }
+
+    #[test]
+    fn test_parse_demo_command() {
+        let cmd = parse_command(".demo").expect("should parse .demo");
+        assert_eq!(cmd.name(), ".demo");
     }
 
     #[test]

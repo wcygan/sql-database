@@ -78,12 +78,12 @@ fn parse_dml_statements() {
     let select = stmt("SELECT id, name FROM posts WHERE id > 10");
     match select {
         Statement::Select {
-            table,
+            from,
             columns,
             selection,
             ..
         } => {
-            assert_eq!(table, "posts");
+            assert_eq!(from.name, "posts");
             assert_eq!(columns.len(), 2);
             assert!(matches!(columns[0], SelectItem::Column(ref c) if c == "id"));
             let predicate = selection.expect("expected WHERE clause");
@@ -127,7 +127,7 @@ fn reject_multi_row_insert() {
 }
 
 #[test]
-fn reject_aliases_and_joins() {
+fn reject_aliases_and_accept_joins() {
     // SELECT aliases not supported.
     let err = parse_sql("SELECT name AS n FROM users").expect_err("aliases should be rejected");
     assert!(
@@ -135,10 +135,21 @@ fn reject_aliases_and_joins() {
         "{err:?}"
     );
 
-    // JOINs not supported.
+    // JOINs are now supported.
     let result = parse_sql("SELECT * FROM users u JOIN posts p ON u.id = p.user_id");
-    let err = result.expect_err("joins should fail");
-    assert!(format!("{err:?}").contains("joins"));
+    assert!(result.is_ok(), "JOINs should parse: {:?}", result);
+
+    // Verify join parsed correctly
+    match &result.unwrap()[0] {
+        Statement::Select { from, joins, .. } => {
+            assert_eq!(from.name, "users");
+            assert_eq!(from.alias, Some("u".to_string()));
+            assert_eq!(joins.len(), 1);
+            assert_eq!(joins[0].table.name, "posts");
+            assert_eq!(joins[0].table.alias, Some("p".to_string()));
+        }
+        _ => panic!("expected SELECT"),
+    }
 }
 
 #[test]
@@ -169,8 +180,12 @@ fn select_requires_from_clause_and_single_table() {
     let err = parse_sql("SELECT 1").expect_err("FROM clause should be required");
     assert!(format!("{err:?}").contains("SELECT requires FROM clause"));
 
-    let err = parse_sql("SELECT * FROM users, posts").expect_err("multi-table select should fail");
-    assert!(format!("{err:?}").contains("joins not supported"));
+    // Implicit cross joins (comma-separated tables) are rejected - use explicit JOIN syntax
+    let err = parse_sql("SELECT * FROM users, posts").expect_err("implicit join should fail");
+    assert!(
+        format!("{err:?}").contains("comma-separated"),
+        "expected comma-separated table error: {err:?}"
+    );
 }
 
 #[test]
@@ -211,12 +226,12 @@ fn sql_subset_v1_select_variants() {
     let select_no_filter = stmt("SELECT id, name FROM users");
     match select_no_filter {
         Statement::Select {
-            table,
+            from,
             columns,
             selection,
             ..
         } => {
-            assert_eq!(table, "users");
+            assert_eq!(from.name, "users");
             assert_eq!(
                 columns,
                 vec![
@@ -452,7 +467,7 @@ fn compound_identifiers_and_nested_exprs_parse() {
     match selection {
         Expr::Binary { left, right, .. } => {
             assert!(
-                matches!(*left, Expr::Column(ref c) if c == "id"),
+                matches!(*left, Expr::Column { ref name, .. } if name == "id"),
                 "compound identifier should become column: {left:?}"
             );
             assert!(
@@ -753,8 +768,8 @@ fn explain_select() {
         Statement::Explain { query, analyze } => {
             assert!(!analyze, "EXPLAIN should have analyze=false");
             match &**query {
-                Statement::Select { table, .. } => {
-                    assert_eq!(table, "users");
+                Statement::Select { from, .. } => {
+                    assert_eq!(from.name, "users");
                 }
                 _ => panic!("expected SELECT inside EXPLAIN"),
             }
@@ -773,9 +788,9 @@ fn explain_analyze_select() {
             assert!(*analyze, "EXPLAIN ANALYZE should have analyze=true");
             match &**query {
                 Statement::Select {
-                    table, selection, ..
+                    from, selection, ..
                 } => {
-                    assert_eq!(table, "users");
+                    assert_eq!(from.name, "users");
                     assert!(selection.is_some(), "should have WHERE clause");
                 }
                 _ => panic!("expected SELECT inside EXPLAIN ANALYZE"),
@@ -804,14 +819,15 @@ fn select_with_order_by_asc() {
     let stmt = stmt("SELECT * FROM users ORDER BY name ASC");
     match stmt {
         Statement::Select {
-            table,
+            from,
             columns,
             selection,
             order_by,
             limit,
             offset,
+            ..
         } => {
-            assert_eq!(table, "users");
+            assert_eq!(from.name, "users");
             assert_eq!(columns, vec![SelectItem::Wildcard]);
             assert!(selection.is_none());
             assert_eq!(order_by.len(), 1);

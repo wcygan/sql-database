@@ -29,7 +29,18 @@ pub enum UnaryOp {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Expr {
     Literal(Value),
-    Column(String),
+    /// Column reference with optional table/alias qualifier.
+    ///
+    /// Examples:
+    /// - `Column { table: None, name: "id" }` - unqualified column
+    /// - `Column { table: Some("users"), name: "id" }` - qualified column
+    /// - `Column { table: Some("u"), name: "id" }` - alias-qualified column
+    Column {
+        /// Optional table name or alias qualifier.
+        table: Option<String>,
+        /// Column name.
+        name: String,
+    },
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
@@ -51,12 +62,8 @@ impl<'a> EvalContext<'a> {
     pub fn eval(&self, expr: &Expr, row: &Row) -> DbResult<Value> {
         match expr {
             Expr::Literal(v) => Ok(v.clone()),
-            Expr::Column(name) => {
-                let idx = self
-                    .schema
-                    .iter()
-                    .position(|c| c.eq_ignore_ascii_case(name))
-                    .ok_or_else(|| DbError::Executor(format!("unknown column '{name}'")))?;
+            Expr::Column { table, name } => {
+                let idx = self.find_column(table.as_deref(), name)?;
                 Ok(row.values[idx].clone())
             }
             Expr::Unary { op, expr } => {
@@ -113,5 +120,34 @@ impl<'a> EvalContext<'a> {
         };
 
         Ok(Value::Bool(result))
+    }
+
+    /// Find column index in schema, supporting qualified and unqualified references.
+    ///
+    /// Schema entries may be:
+    /// - Simple names: `"id"`, `"name"`
+    /// - Qualified names: `"users.id"`, `"orders.user_id"`
+    ///
+    /// Matching rules:
+    /// - Qualified ref (`table.col`): Match `"table.col"` exactly
+    /// - Unqualified ref (`col`): Match simple `"col"` or suffix `".col"`
+    fn find_column(&self, table: Option<&str>, name: &str) -> DbResult<usize> {
+        if let Some(qualifier) = table {
+            // Qualified column reference: look for exact "table.column" match
+            let full_name = format!("{}.{}", qualifier, name);
+            self.schema
+                .iter()
+                .position(|c| c.eq_ignore_ascii_case(&full_name))
+                .ok_or_else(|| DbError::Executor(format!("unknown column '{}.{}'", qualifier, name)))
+        } else {
+            // Unqualified: try exact match first, then suffix match
+            self.schema
+                .iter()
+                .position(|c| {
+                    c.eq_ignore_ascii_case(name)
+                        || c.to_lowercase().ends_with(&format!(".{}", name.to_lowercase()))
+                })
+                .ok_or_else(|| DbError::Executor(format!("unknown column '{}'", name)))
+        }
     }
 }

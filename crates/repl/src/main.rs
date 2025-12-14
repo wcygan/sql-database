@@ -59,17 +59,20 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn execute_and_exit(db: Database, sql: &str) -> Result<()> {
-    use common::{
-        RecordBatch,
-        pretty::{self, TableStyleKind},
-    };
+async fn execute_and_exit(db: Database, input: &str) -> Result<()> {
+    use common::pretty::{self, TableStyleKind};
 
-    let result = db.execute(sql).await?;
+    // Check if this is a meta-command
+    if input.trim().starts_with('.') {
+        return execute_meta_command(db, input.trim()).await;
+    }
+
+    // Otherwise execute as SQL
+    let result = db.execute(input).await?;
 
     match result {
         QueryResult::Rows { schema, rows } => {
-            let batch = RecordBatch {
+            let batch = common::RecordBatch {
                 columns: schema,
                 rows,
             };
@@ -81,6 +84,37 @@ async fn execute_and_exit(db: Database, sql: &str) -> Result<()> {
         }
         QueryResult::Empty => {
             // For DDL operations, no output
+        }
+    }
+
+    Ok(())
+}
+
+async fn execute_meta_command(db: Database, input: &str) -> Result<()> {
+    use common::pretty::{self, TableStyleKind};
+    use tui::meta_commands::{parse_command, MetaCommandResult};
+
+    let cmd = parse_command(input).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    // Get the runtime handle before moving db into spawn_blocking
+    let runtime_handle = tokio::runtime::Handle::current();
+
+    // Run the meta-command in a blocking task to allow block_on calls
+    let result = tokio::task::spawn_blocking(move || cmd.execute(&db, &runtime_handle))
+        .await
+        .map_err(|e| anyhow::anyhow!("Task join error: {}", e))?;
+
+    match result {
+        MetaCommandResult::Results { batch, status } => {
+            let rendered = pretty::render_record_batch(&batch, TableStyleKind::Modern);
+            println!("{}", rendered);
+            println!("{}", status);
+        }
+        MetaCommandResult::Message(msg) => {
+            println!("{}", msg);
+        }
+        MetaCommandResult::Error(err) => {
+            anyhow::bail!("{}", err);
         }
     }
 

@@ -4,6 +4,14 @@ use parser::parse_sql;
 use pretty_assertions::assert_eq;
 use types::SqlType;
 
+/// Helper to create unqualified column expression.
+fn col(name: &str) -> Expr {
+    Expr::Column {
+        table: None,
+        name: name.to_string(),
+    }
+}
+
 /// Create a sample catalog with a users table.
 fn sample_catalog() -> Catalog {
     let mut catalog = Catalog::new();
@@ -311,7 +319,7 @@ fn expression_binding_resolves_columns() {
     let schema = vec!["id".to_string(), "name".to_string(), "age".to_string()];
 
     let expr = Expr::Binary {
-        left: Box::new(Expr::Column("age".into())),
+        left: Box::new(col("age")),
         op: BinaryOp::Gt,
         right: Box::new(Expr::Literal(Value::Int(30))),
     };
@@ -334,7 +342,7 @@ fn case_insensitive_column_binding() {
     let schema = vec!["id".to_string(), "Name".to_string(), "AGE".to_string()];
 
     // Query uses lowercase, schema has mixed case
-    let expr = Expr::Column("name".into());
+    let expr = col("name");
     let resolved = Planner::bind_expr_with_schema(&schema, expr).unwrap();
 
     assert_eq!(resolved, ResolvedExpr::Column(1));
@@ -348,13 +356,13 @@ fn complex_expression_binding() {
     // (age > 20) AND (age < 50)
     let expr = Expr::Binary {
         left: Box::new(Expr::Binary {
-            left: Box::new(Expr::Column("age".into())),
+            left: Box::new(col("age")),
             op: BinaryOp::Gt,
             right: Box::new(Expr::Literal(Value::Int(20))),
         }),
         op: BinaryOp::And,
         right: Box::new(Expr::Binary {
-            left: Box::new(Expr::Column("age".into())),
+            left: Box::new(col("age")),
             op: BinaryOp::Lt,
             right: Box::new(Expr::Literal(Value::Int(50))),
         }),
@@ -393,7 +401,7 @@ fn explain_logical_formats_correctly() {
             table: "users".into(),
         }),
         predicate: Expr::Binary {
-            left: Box::new(Expr::Column("age".into())),
+            left: Box::new(col("age")),
             op: BinaryOp::Gt,
             right: Box::new(Expr::Literal(Value::Int(20))),
         },
@@ -524,7 +532,7 @@ fn nested_filters_optimize_recursively() {
     let filter1 = LogicalPlan::Filter {
         input: Box::new(inner_scan),
         predicate: Expr::Binary {
-            left: Box::new(Expr::Column("age".into())),
+            left: Box::new(col("age")),
             op: BinaryOp::Gt,
             right: Box::new(Expr::Literal(Value::Int(20))),
         },
@@ -536,7 +544,7 @@ fn nested_filters_optimize_recursively() {
     let filter2 = LogicalPlan::Filter {
         input: Box::new(project),
         predicate: Expr::Binary {
-            left: Box::new(Expr::Column("id".into())),
+            left: Box::new(col("id")),
             op: BinaryOp::Eq,
             right: Box::new(Expr::Literal(Value::Int(1))),
         },
@@ -649,7 +657,7 @@ fn unary_expression_binding() {
     // NOT active
     let expr = Expr::Unary {
         op: UnaryOp::Not,
-        expr: Box::new(Expr::Column("active".into())),
+        expr: Box::new(col("active")),
     };
 
     let resolved = Planner::bind_expr_with_schema(&schema, expr).unwrap();
@@ -671,13 +679,13 @@ fn nested_binary_expressions() {
     // (age > 20) OR (score < 50)
     let expr = Expr::Binary {
         left: Box::new(Expr::Binary {
-            left: Box::new(Expr::Column("age".into())),
+            left: Box::new(col("age")),
             op: BinaryOp::Gt,
             right: Box::new(Expr::Literal(Value::Int(20))),
         }),
         op: BinaryOp::Or,
         right: Box::new(Expr::Binary {
-            left: Box::new(Expr::Column("score".into())),
+            left: Box::new(col("score")),
             op: BinaryOp::Lt,
             right: Box::new(Expr::Literal(Value::Int(50))),
         }),

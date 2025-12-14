@@ -3,6 +3,7 @@
 use crate::{
     dml::{DeleteExec, InsertExec, UpdateExec},
     filter::FilterExec,
+    join::NestedLoopJoinExec,
     limit::LimitExec,
     project::ProjectExec,
     scan::{IndexScanExec, SeqScanExec},
@@ -114,6 +115,22 @@ pub fn build_executor(plan: PhysicalPlan) -> DbResult<Box<dyn Executor>> {
         } => {
             let child = build_executor(*input)?;
             Ok(Box::new(LimitExec::new(child, limit, offset)))
+        }
+
+        PhysicalPlan::NestedLoopJoin {
+            left,
+            right,
+            condition,
+            schema,
+        } => {
+            let left_child = build_executor(*left)?;
+            let right_child = build_executor(*right)?;
+            Ok(Box::new(NestedLoopJoinExec::new(
+                left_child,
+                right_child,
+                condition,
+                schema,
+            )))
         }
     }
 }

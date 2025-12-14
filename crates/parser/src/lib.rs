@@ -217,9 +217,21 @@ fn map_select(query: sqlast::Query) -> DbResult<Statement> {
         return Err(DbError::Parser("SELECT requires FROM clause".into()));
     }
     if from.len() > 1 {
-        return Err(DbError::Parser("joins not supported".into()));
+        return Err(DbError::Parser(
+            "comma-separated table lists not supported; use JOIN instead".into(),
+        ));
     }
-    let table = table_name_from_with_joins(&from[0])?;
+
+    // Parse primary FROM table with optional alias
+    let from_table = map_table_ref(&from[0])?;
+
+    // Parse JOIN clauses
+    let joins = from[0]
+        .joins
+        .iter()
+        .map(map_join_clause)
+        .collect::<DbResult<Vec<_>>>()?;
+
     let columns = projection
         .into_iter()
         .map(map_select_item)
@@ -261,11 +273,74 @@ fn map_select(query: sqlast::Query) -> DbResult<Statement> {
 
     Ok(Statement::Select {
         columns,
-        table,
+        from: from_table,
+        joins,
         selection,
         order_by,
         limit,
         offset,
+    })
+}
+
+/// Extract table reference with optional alias from a TableWithJoins.
+fn map_table_ref(table: &sqlast::TableWithJoins) -> DbResult<ast::TableRef> {
+    match &table.relation {
+        sqlast::TableFactor::Table { name, alias, .. } => Ok(ast::TableRef {
+            name: normalize_object_name(name)?,
+            alias: alias.as_ref().map(|a| normalize_ident(&a.name)),
+        }),
+        _ => Err(DbError::Parser("unsupported table factor".into())),
+    }
+}
+
+/// Map a single JOIN clause to our AST.
+fn map_join_clause(join: &sqlast::Join) -> DbResult<ast::JoinClause> {
+    use sqlast::JoinConstraint;
+    use sqlast::JoinOperator;
+
+    // Extract join type and condition
+    let (join_type, condition_expr) = match &join.join_operator {
+        JoinOperator::Inner(JoinConstraint::On(expr)) => (ast::JoinType::Inner, expr.clone()),
+        JoinOperator::Inner(JoinConstraint::Using(_)) => {
+            return Err(DbError::Parser("USING clause not supported; use ON instead".into()))
+        }
+        JoinOperator::Inner(JoinConstraint::Natural) => {
+            return Err(DbError::Parser("NATURAL JOIN not supported; use ON instead".into()))
+        }
+        JoinOperator::Inner(JoinConstraint::None) => {
+            return Err(DbError::Parser("INNER JOIN requires ON clause".into()))
+        }
+        JoinOperator::LeftOuter(_) => {
+            return Err(DbError::Parser("LEFT JOIN not yet supported".into()))
+        }
+        JoinOperator::RightOuter(_) => {
+            return Err(DbError::Parser("RIGHT JOIN not yet supported".into()))
+        }
+        JoinOperator::FullOuter(_) => {
+            return Err(DbError::Parser("FULL OUTER JOIN not yet supported".into()))
+        }
+        JoinOperator::CrossJoin => {
+            return Err(DbError::Parser("CROSS JOIN not yet supported".into()))
+        }
+        _ => return Err(DbError::Parser("unsupported join type".into())),
+    };
+
+    // Extract table reference from join
+    let table = match &join.relation {
+        sqlast::TableFactor::Table { name, alias, .. } => ast::TableRef {
+            name: normalize_object_name(name)?,
+            alias: alias.as_ref().map(|a| normalize_ident(&a.name)),
+        },
+        _ => return Err(DbError::Parser("unsupported join table factor".into())),
+    };
+
+    // Parse the ON condition
+    let condition = map_expr(condition_expr)?;
+
+    Ok(ast::JoinClause {
+        join_type,
+        table,
+        condition,
     })
 }
 
@@ -332,10 +407,13 @@ fn map_select_item(item: sqlast::SelectItem) -> DbResult<SelectItem> {
         sqlast::SelectItem::UnnamedExpr(expr) => match expr {
             sqlast::Expr::Identifier(ident) => Ok(SelectItem::Column(normalize_ident_owned(ident))),
             sqlast::Expr::CompoundIdentifier(parts) => {
-                let ident = parts
-                    .last()
-                    .ok_or_else(|| DbError::Parser("invalid identifier".into()))?;
-                Ok(SelectItem::Column(normalize_ident(ident)))
+                // Preserve full qualified name (e.g., "s.name" for alias.column)
+                let qualified_name = parts
+                    .iter()
+                    .map(normalize_ident)
+                    .collect::<Vec<_>>()
+                    .join(".");
+                Ok(SelectItem::Column(qualified_name))
             }
             other => Err(DbError::Parser(format!(
                 "unsupported select item: {other:?}"
@@ -351,12 +429,26 @@ fn map_expr(expr: sqlast::Expr) -> DbResult<Expr> {
     use sqlast::Expr as SqlExpr;
 
     match expr {
-        SqlExpr::Identifier(ident) => Ok(Expr::Column(normalize_ident_owned(ident))),
+        SqlExpr::Identifier(ident) => Ok(Expr::Column {
+            table: None,
+            name: normalize_ident_owned(ident),
+        }),
         SqlExpr::CompoundIdentifier(idents) => {
-            let ident = idents
-                .last()
-                .ok_or_else(|| DbError::Parser("invalid identifier".into()))?;
-            Ok(Expr::Column(normalize_ident(ident)))
+            // Support table.column or just column
+            match idents.len() {
+                1 => Ok(Expr::Column {
+                    table: None,
+                    name: normalize_ident(&idents[0]),
+                }),
+                2 => Ok(Expr::Column {
+                    table: Some(normalize_ident(&idents[0])),
+                    name: normalize_ident(&idents[1]),
+                }),
+                _ => Err(DbError::Parser(format!(
+                    "invalid column reference with {} parts",
+                    idents.len()
+                ))),
+            }
         }
         SqlExpr::Value(value) => Ok(Expr::Literal(map_value(value)?)),
         SqlExpr::BinaryOp { left, op, right } => Ok(Expr::Binary {
@@ -441,9 +533,12 @@ fn first_name(mut names: Vec<sqlast::ObjectName>) -> DbResult<String> {
     normalize_object_name(&names.remove(0))
 }
 
+/// Extract simple table name for UPDATE/DELETE (no joins allowed).
 fn table_name_from_with_joins(table: &sqlast::TableWithJoins) -> DbResult<String> {
     if !table.joins.is_empty() {
-        return Err(DbError::Parser("joins not supported".into()));
+        return Err(DbError::Parser(
+            "joins not supported in UPDATE/DELETE statements".into(),
+        ));
     }
     match &table.relation {
         sqlast::TableFactor::Table { name, .. } => normalize_object_name(name),

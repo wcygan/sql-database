@@ -1,5 +1,5 @@
 mod app;
-mod meta_commands;
+pub mod meta_commands;
 mod ui;
 
 pub use app::App;

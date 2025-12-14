@@ -42,11 +42,11 @@ mod tests;
 use catalog::{Catalog, IndexKind, TableMeta};
 use common::{ColumnId, DbError, DbResult, TableId};
 use expr::{BinaryOp, Expr, UnaryOp};
-use parser::{SelectItem, Statement};
+use parser::{JoinType, SelectItem, Statement};
 use types::Value;
 
 // Re-export for use by executor and internal use
-pub use parser::SortDirection;
+pub use parser::{JoinType as PlanJoinType, SortDirection};
 
 /// Logical plan node - optimizer-friendly representation with string names.
 ///
@@ -86,6 +86,18 @@ pub enum LogicalPlan {
     Delete {
         table: String,
         predicate: Option<Expr>,
+    },
+    /// Join two plans together.
+    Join {
+        left: Box<LogicalPlan>,
+        right: Box<LogicalPlan>,
+        join_type: JoinType,
+        /// Join condition (ON clause).
+        condition: Expr,
+        /// Effective name (alias or table name) for the left side.
+        left_name: String,
+        /// Effective name (alias or table name) for the right side.
+        right_name: String,
     },
 }
 
@@ -141,6 +153,16 @@ pub enum PhysicalPlan {
     Delete {
         table_id: TableId,
         predicate: Option<ResolvedExpr>,
+    },
+    /// Nested loop join - for each row from left, scan all right rows.
+    NestedLoopJoin {
+        left: Box<PhysicalPlan>,
+        right: Box<PhysicalPlan>,
+        /// Join condition with resolved column ordinals.
+        condition: ResolvedExpr,
+        /// Combined schema: left columns first, then right columns.
+        /// Column names are prefixed with table/alias name (e.g., "users.id").
+        schema: Vec<String>,
     },
 }
 
@@ -260,20 +282,46 @@ impl Planner {
             }),
             Statement::Select {
                 columns,
-                table,
+                from,
+                joins,
                 selection,
                 order_by,
                 limit,
                 offset,
             } => {
-                let scan = LogicalPlan::TableScan { table };
+                // Build initial scan from primary FROM table
+                let from_name = from.effective_name().to_string();
+                let mut plan = LogicalPlan::TableScan {
+                    table: from.name.clone(),
+                };
+
+                // Add JOINs left-to-right
+                let mut current_left_name = from_name;
+                for join_clause in joins {
+                    let right_name = join_clause.table.effective_name().to_string();
+                    let right_scan = LogicalPlan::TableScan {
+                        table: join_clause.table.name.clone(),
+                    };
+                    plan = LogicalPlan::Join {
+                        left: Box::new(plan),
+                        right: Box::new(right_scan),
+                        join_type: join_clause.join_type,
+                        condition: join_clause.condition,
+                        left_name: current_left_name.clone(),
+                        right_name: right_name.clone(),
+                    };
+                    // For chained joins, the effective name becomes complex
+                    // but we don't support chained joins in v1, so this is fine
+                    current_left_name = format!("{}_{}", current_left_name, right_name);
+                }
+
                 let with_filter = if let Some(pred) = selection {
                     LogicalPlan::Filter {
-                        input: Box::new(scan),
+                        input: Box::new(plan),
                         predicate: pred,
                     }
                 } else {
-                    scan
+                    plan
                 };
                 let with_project = if columns.iter().any(|c| matches!(c, SelectItem::Wildcard)) {
                     LogicalPlan::Project {
@@ -382,6 +430,22 @@ impl Planner {
                 offset,
             },
             Insert { .. } | Update { .. } | Delete { .. } | TableScan { .. } => plan,
+            // For joins, recurse into both sides but don't try to push filters through yet
+            Join {
+                left,
+                right,
+                join_type,
+                condition,
+                left_name,
+                right_name,
+            } => Join {
+                left: Box::new(Self::pushdown(*left)),
+                right: Box::new(Self::pushdown(*right)),
+                join_type,
+                condition,
+                left_name,
+                right_name,
+            },
         }
     }
 
@@ -597,15 +661,62 @@ impl Planner {
                     offset,
                 })
             }
+            LogicalPlan::Join {
+                left,
+                right,
+                join_type: _,
+                condition,
+                left_name,
+                right_name,
+            } => {
+                // Bind left and right sides
+                let left_physical = Self::bind(*left, ctx)?;
+                let right_physical = Self::bind(*right, ctx)?;
+
+                // Get schemas from both sides
+                let left_schema = Self::output_schema(&left_physical);
+                let right_schema = Self::output_schema(&right_physical);
+
+                // Build combined schema with table/alias prefixes
+                let combined_schema: Vec<String> = left_schema
+                    .iter()
+                    .map(|col| {
+                        // If already qualified, keep it; otherwise prefix with table name
+                        if col.contains('.') {
+                            col.clone()
+                        } else {
+                            format!("{}.{}", left_name, col)
+                        }
+                    })
+                    .chain(right_schema.iter().map(|col| {
+                        if col.contains('.') {
+                            col.clone()
+                        } else {
+                            format!("{}.{}", right_name, col)
+                        }
+                    }))
+                    .collect();
+
+                // Bind condition expression with combined schema
+                let resolved_condition =
+                    Self::bind_expr_with_schema(&combined_schema, condition)?;
+
+                Ok(PhysicalPlan::NestedLoopJoin {
+                    left: Box::new(left_physical),
+                    right: Box::new(right_physical),
+                    condition: resolved_condition,
+                    schema: combined_schema,
+                })
+            }
         }
     }
 
     /// Get the output schema (column names) from a physical plan.
     fn output_schema(plan: &PhysicalPlan) -> Vec<String> {
         match plan {
-            PhysicalPlan::SeqScan { schema, .. } | PhysicalPlan::IndexScan { schema, .. } => {
-                schema.clone()
-            }
+            PhysicalPlan::SeqScan { schema, .. }
+            | PhysicalPlan::IndexScan { schema, .. }
+            | PhysicalPlan::NestedLoopJoin { schema, .. } => schema.clone(),
             PhysicalPlan::Filter { input, .. }
             | PhysicalPlan::Project { input, .. }
             | PhysicalPlan::Sort { input, .. }
@@ -635,11 +746,8 @@ impl Planner {
     fn bind_expr_with_schema(schema: &[String], e: Expr) -> DbResult<ResolvedExpr> {
         match e {
             Expr::Literal(v) => Ok(ResolvedExpr::Literal(v)),
-            Expr::Column(name) => {
-                let idx = schema
-                    .iter()
-                    .position(|c| c.eq_ignore_ascii_case(&name))
-                    .ok_or_else(|| DbError::Planner(format!("unknown column '{name}'")))?;
+            Expr::Column { table, name } => {
+                let idx = Self::find_column_in_schema(schema, table.as_deref(), &name)?;
                 Ok(ResolvedExpr::Column(idx as ColumnId))
             }
             Expr::Unary { op, expr } => Ok(ResolvedExpr::Unary {
@@ -651,6 +759,50 @@ impl Planner {
                 op,
                 right: Box::new(Self::bind_expr_with_schema(schema, *right)?),
             }),
+        }
+    }
+
+    /// Find column in schema, supporting both qualified and unqualified references.
+    ///
+    /// Schema entries may be simple ("id") or qualified ("users.id").
+    /// - Qualified ref: Look for exact match "table.column"
+    /// - Unqualified ref: Match simple "column" or suffix ".column", error if ambiguous
+    fn find_column_in_schema(
+        schema: &[String],
+        table: Option<&str>,
+        name: &str,
+    ) -> DbResult<usize> {
+        if let Some(qualifier) = table {
+            // Qualified: look for exact "table.column" match
+            let full_name = format!("{}.{}", qualifier, name);
+            schema
+                .iter()
+                .position(|c| c.eq_ignore_ascii_case(&full_name))
+                .ok_or_else(|| {
+                    DbError::Planner(format!("unknown column '{}.{}'", qualifier, name))
+                })
+        } else {
+            // Unqualified: search for simple match or suffix match
+            // First try exact match
+            if let Some(idx) = schema.iter().position(|c| c.eq_ignore_ascii_case(name)) {
+                return Ok(idx);
+            }
+            // Then try suffix match (for qualified schema columns)
+            let suffix = format!(".{}", name.to_lowercase());
+            let matches: Vec<usize> = schema
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.to_lowercase().ends_with(&suffix))
+                .map(|(i, _)| i)
+                .collect();
+            match matches.len() {
+                0 => Err(DbError::Planner(format!("unknown column '{}'", name))),
+                1 => Ok(matches[0]),
+                _ => Err(DbError::Planner(format!(
+                    "ambiguous column '{}' (exists in multiple tables)",
+                    name
+                ))),
+            }
         }
     }
 
@@ -883,6 +1035,22 @@ pub fn explain_logical(p: &LogicalPlan) -> String {
             offset,
             indent(&explain_logical(input))
         ),
+        LogicalPlan::Join {
+            left,
+            right,
+            join_type,
+            condition,
+            left_name,
+            right_name,
+        } => format!(
+            "Join type={:?} on={:?} ({} x {})\n  left: {}\n  right: {}",
+            join_type,
+            condition,
+            left_name,
+            right_name,
+            indent(&explain_logical(left)),
+            indent(&explain_logical(right))
+        ),
     }
 }
 
@@ -937,6 +1105,18 @@ pub fn explain_physical(p: &PhysicalPlan) -> String {
             limit,
             offset,
             indent(&explain_physical(input))
+        ),
+        PhysicalPlan::NestedLoopJoin {
+            left,
+            right,
+            condition,
+            schema,
+        } => format!(
+            "NestedLoopJoin on={:?} schema={:?}\n  left: {}\n  right: {}",
+            condition,
+            schema,
+            indent(&explain_physical(left)),
+            indent(&explain_physical(right))
         ),
     }
 }

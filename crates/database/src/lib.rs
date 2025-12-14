@@ -1435,6 +1435,7 @@ fn infer_schema(plan: &PhysicalPlan) -> Vec<String> {
         PhysicalPlan::Insert { .. } | PhysicalPlan::Update { .. } | PhysicalPlan::Delete { .. } => {
             vec![]
         }
+        PhysicalPlan::NestedLoopJoin { schema, .. } => schema.clone(),
     }
 }
 
@@ -1472,7 +1473,7 @@ fn is_dml_statement(stmt: &Statement) -> bool {
 fn resolve_expr_for_scan(expr: &expr::Expr, schema: &[String]) -> Result<ResolvedExpr> {
     match expr {
         expr::Expr::Literal(val) => Ok(ResolvedExpr::Literal(val.clone())),
-        expr::Expr::Column(name) => {
+        expr::Expr::Column { table: _, name } => {
             let col_idx = schema
                 .iter()
                 .position(|n| n == name)
