@@ -11,6 +11,7 @@ buffer = { workspace = true }
 catalog = { workspace = true }
 common = { workspace = true }
 expr = { workspace = true }
+hash = { workspace = true }
 planner = { workspace = true }
 serde = { workspace = true }
 storage = { workspace = true }

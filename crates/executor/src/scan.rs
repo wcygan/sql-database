@@ -3,8 +3,9 @@
 use crate::filter::eval_resolved_expr;
 use crate::{ExecutionContext, Executor};
 use btree::BTreeIndex;
-use catalog::IndexId;
+use catalog::{IndexId, IndexKind};
 use common::{DbResult, ExecutionStats, PageId, RecordId, Row, TableId};
+use hash::HashIndex;
 use planner::IndexPredicate;
 use std::time::Instant;
 use storage::HeapTable;
@@ -191,13 +192,6 @@ impl IndexScanExec {
         }
     }
 
-    /// Find the index ID from the catalog.
-    fn find_index_id(&self, ctx: &ExecutionContext) -> DbResult<IndexId> {
-        let table_meta = ctx.catalog.table_by_id(self.table_id)?;
-        let index_meta = table_meta.index(&self.index_name)?;
-        Ok(index_meta.id)
-    }
-
     /// Evaluate the predicate value to get the search key.
     fn eval_predicate_value(&self, pred: &planner::ResolvedExpr) -> DbResult<Value> {
         // For index lookups, we need a literal value
@@ -206,9 +200,13 @@ impl IndexScanExec {
         eval_resolved_expr(pred, &empty_row)
     }
 
-    /// Query the B+Tree index for matching RecordIds.
+    /// Query the index for matching RecordIds.
+    /// Supports both BTree and Hash indexes, and composite keys.
     fn query_index(&self, ctx: &ExecutionContext) -> DbResult<Vec<RecordId>> {
-        let index_id = self.find_index_id(ctx)?;
+        let table_meta = ctx.catalog.table_by_id(self.table_id)?;
+        let index_meta = table_meta.index(&self.index_name)?;
+        let index_id = index_meta.id;
+        let index_kind = index_meta.kind.clone();
         let index_path = ctx.data_dir.join(format!("index_{}.idx", index_id.0));
 
         // Check if index file exists
@@ -219,18 +217,62 @@ impl IndexScanExec {
             )));
         }
 
-        let mut btree = BTreeIndex::open(&index_path, index_id)?;
-
         match &self.predicate {
             IndexPredicate::Eq { value, .. } => {
                 let key_value = self.eval_predicate_value(value)?;
-                btree.search(&[key_value])
+                let key = vec![key_value];
+                self.search_index(&index_path, index_id, &index_kind, &key)
+            }
+            IndexPredicate::CompositeEq { values, .. } => {
+                // Evaluate all values in the composite key
+                let key: Vec<Value> = values
+                    .iter()
+                    .map(|v| self.eval_predicate_value(v))
+                    .collect::<DbResult<Vec<_>>>()?;
+                self.search_index(&index_path, index_id, &index_kind, &key)
             }
             IndexPredicate::Range { low, high, .. } => {
-                let low_key = self.eval_predicate_value(low)?;
-                let high_key = self.eval_predicate_value(high)?;
-                btree.range_scan(Some(&[low_key]), Some(&[high_key]))
+                // Range predicates only work with BTree indexes
+                match index_kind {
+                    IndexKind::BTree => {
+                        let mut btree = BTreeIndex::open(&index_path, index_id)?;
+                        let low_key = self.eval_predicate_value(low)?;
+                        let high_key = self.eval_predicate_value(high)?;
+                        btree.range_scan(Some(&[low_key]), Some(&[high_key]))
+                    }
+                    IndexKind::Hash => Err(common::DbError::Executor(
+                        "Hash indexes do not support range scans".into(),
+                    )),
+                    // Bitmap and Trie indexes not yet implemented
+                    IndexKind::Bitmap | IndexKind::Trie => Err(common::DbError::Executor(
+                        "Bitmap and Trie indexes not yet implemented".into(),
+                    )),
+                }
             }
+        }
+    }
+
+    /// Search an index for matching RecordIds.
+    fn search_index(
+        &self,
+        index_path: &std::path::Path,
+        index_id: IndexId,
+        index_kind: &IndexKind,
+        key: &[Value],
+    ) -> DbResult<Vec<RecordId>> {
+        match index_kind {
+            IndexKind::BTree => {
+                let mut btree = BTreeIndex::open(index_path, index_id)?;
+                btree.search(key)
+            }
+            IndexKind::Hash => {
+                let mut hash = HashIndex::open(index_path, index_id)?;
+                hash.search(key)
+            }
+            // Bitmap and Trie indexes not yet implemented
+            IndexKind::Bitmap | IndexKind::Trie => Err(common::DbError::Executor(
+                "Bitmap and Trie indexes not yet implemented".into(),
+            )),
         }
     }
 }

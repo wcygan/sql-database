@@ -1,5 +1,13 @@
 use expr::Expr;
 
+/// Index type (algorithm) for CREATE INDEX.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum IndexType {
+    #[default]
+    BTree,
+    Hash,
+}
+
 /// Sort direction for ORDER BY clauses.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SortDirection {
@@ -28,6 +36,7 @@ pub enum Statement {
         name: String,
         table: String,
         column: String,
+        index_type: IndexType,
     },
     DropIndex {
         name: String,

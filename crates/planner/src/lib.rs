@@ -151,13 +151,17 @@ pub struct ResolvedOrderByExpr {
     pub direction: SortDirection,
 }
 
-/// Index predicate for simple index scans.
+/// Index predicate for index scans.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IndexPredicate {
-    Eq {
-        col: ColumnId,
-        value: ResolvedExpr,
+    /// Single-column equality: col = value
+    Eq { col: ColumnId, value: ResolvedExpr },
+    /// Composite key equality: (col1, col2, ...) = (val1, val2, ...)
+    CompositeEq {
+        columns: Vec<ColumnId>,
+        values: Vec<ResolvedExpr>,
     },
+    /// Range predicate (B+Tree only)
     Range {
         col: ColumnId,
         low: ResolvedExpr,
@@ -446,16 +450,15 @@ impl Planner {
                 let input_physical = Self::bind(*input, ctx)?;
                 let resolved = Self::bind_expr(&input_physical, predicate, ctx)?;
 
-                // Try index scan optimization
+                // Try index scan optimization using composite key selection
                 if let PhysicalPlan::SeqScan { table_id, schema } = &input_physical
-                    && let Some((col_id, pred)) =
-                        Self::try_extract_index_predicate(schema, &resolved)
-                    && let Some(index_name) = Self::find_index_for_col(ctx, table_id, col_id)
+                    && let Some((index_name, idx_pred)) =
+                        Self::find_best_index(ctx, table_id, &resolved)
                 {
                     let idx_scan = PhysicalPlan::IndexScan {
                         table_id: *table_id,
                         index_name,
-                        predicate: pred,
+                        predicate: idx_pred,
                         schema: schema.clone(),
                     };
                     return Ok(PhysicalPlan::Filter {
@@ -651,7 +654,7 @@ impl Planner {
         }
     }
 
-    /// Try to extract a simple index predicate from an expression.
+    /// Try to extract a simple index predicate from an expression (single-column).
     fn try_extract_index_predicate(
         _schema: &[String],
         pred: &ResolvedExpr,
@@ -689,22 +692,154 @@ impl Planner {
         None
     }
 
-    /// Find an index covering a specific column.
-    fn find_index_for_col(
+    /// Extract all equality predicates from a conjunction (AND tree).
+    fn extract_equality_predicates(pred: &ResolvedExpr) -> Vec<(ColumnId, ResolvedExpr)> {
+        let mut result = Vec::new();
+        Self::collect_equality_predicates(pred, &mut result);
+        result
+    }
+
+    /// Recursively collect equality predicates from AND expressions.
+    fn collect_equality_predicates(pred: &ResolvedExpr, out: &mut Vec<(ColumnId, ResolvedExpr)>) {
+        match pred {
+            ResolvedExpr::Binary {
+                left,
+                op: BinaryOp::And,
+                right,
+            } => {
+                Self::collect_equality_predicates(left, out);
+                Self::collect_equality_predicates(right, out);
+            }
+            ResolvedExpr::Binary {
+                left,
+                op: BinaryOp::Eq,
+                right,
+            } => {
+                // col = val
+                if let (ResolvedExpr::Column(col), ResolvedExpr::Literal(_)) = (&**left, &**right) {
+                    out.push((*col, (**right).clone()));
+                }
+                // val = col
+                else if let (ResolvedExpr::Literal(_), ResolvedExpr::Column(col)) =
+                    (&**left, &**right)
+                {
+                    out.push((*col, (**left).clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Check if a predicate contains only equality comparisons (no ranges).
+    fn is_pure_equality_predicate(pred: &ResolvedExpr) -> bool {
+        match pred {
+            ResolvedExpr::Binary {
+                op: BinaryOp::Eq, ..
+            } => true,
+            ResolvedExpr::Binary {
+                op: BinaryOp::And,
+                left,
+                right,
+            } => Self::is_pure_equality_predicate(left) && Self::is_pure_equality_predicate(right),
+            _ => false,
+        }
+    }
+
+    /// Find the best index for a predicate, supporting composite keys.
+    ///
+    /// Ranking:
+    /// 1. Full composite match > prefix match > single column
+    /// 2. For equality: prefer Hash > BTree
+    /// 3. For range: require BTree
+    fn find_best_index(
         ctx: &PlanningContext,
         table_id: &TableId,
-        col: ColumnId,
-    ) -> Option<String> {
+        pred: &ResolvedExpr,
+    ) -> Option<(String, IndexPredicate)> {
         let table_meta = ctx.catalog.table_by_id(*table_id).ok()?;
-        for idx in table_meta.indexes() {
-            if idx.columns.len() == 1 && idx.columns[0] == col {
-                // Only use BTree indexes for now (support both equality and range)
-                if matches!(idx.kind, IndexKind::BTree) {
-                    return Some(idx.name.clone());
+        let indexes: Vec<_> = table_meta.indexes().to_vec();
+
+        if indexes.is_empty() {
+            return None;
+        }
+
+        let is_equality_only = Self::is_pure_equality_predicate(pred);
+        let eq_preds = Self::extract_equality_predicates(pred);
+
+        if eq_preds.is_empty() {
+            // No equality predicates - try range predicates with single-column extraction
+            if let Some((col, range_pred)) = Self::try_extract_index_predicate(&[], pred) {
+                for idx in &indexes {
+                    if idx.columns.len() == 1
+                        && idx.columns[0] == col
+                        && matches!(idx.kind, IndexKind::BTree)
+                    {
+                        return Some((idx.name.clone(), range_pred));
+                    }
+                }
+            }
+            return None;
+        }
+
+        // Build map of column -> value for quick lookup
+        let pred_map: std::collections::HashMap<ColumnId, ResolvedExpr> =
+            eq_preds.into_iter().collect();
+
+        // Score each index by prefix column coverage
+        let mut best_match: Option<(&catalog::IndexMeta, usize)> = None;
+
+        for idx in &indexes {
+            // Filter by index kind based on predicate type
+            if !is_equality_only && !matches!(idx.kind, IndexKind::BTree) {
+                continue; // Range requires BTree
+            }
+            if !matches!(idx.kind, IndexKind::BTree | IndexKind::Hash) {
+                continue; // Only BTree and Hash supported
+            }
+
+            // Check prefix match: index columns must match predicate columns in order
+            let mut matched_count = 0;
+            for &col in &idx.columns {
+                if pred_map.contains_key(&col) {
+                    matched_count += 1;
+                } else {
+                    break; // Prefix match broken
+                }
+            }
+
+            if matched_count > 0 {
+                let is_better = match &best_match {
+                    None => true,
+                    Some((_, best_count)) => {
+                        // Prefer more columns matched
+                        matched_count > *best_count
+                    }
+                };
+                if is_better {
+                    best_match = Some((idx, matched_count));
                 }
             }
         }
-        None
+
+        let (best_idx, matched_count) = best_match?;
+
+        // Build the predicate
+        let columns: Vec<ColumnId> = best_idx.columns[..matched_count].to_vec();
+        let values: Vec<ResolvedExpr> = columns
+            .iter()
+            .map(|col| pred_map.get(col).cloned().unwrap())
+            .collect();
+
+        let predicate = if matched_count == 1 {
+            IndexPredicate::Eq {
+                col: columns[0],
+                value: values.into_iter().next().unwrap(),
+            }
+        } else {
+            IndexPredicate::CompositeEq { columns, values }
+        };
+
+        Some((best_idx.name.clone(), predicate))
     }
 }
 

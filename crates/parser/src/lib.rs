@@ -37,8 +37,9 @@ fn map_statement(stmt: sqlast::Statement) -> DbResult<Statement> {
             name,
             table_name,
             columns,
+            using,
             ..
-        } => map_create_index(name, table_name, columns),
+        } => map_create_index(name, table_name, columns, using),
         SqlStatement::Insert {
             table_name, source, ..
         } => map_insert(table_name, source),
@@ -103,6 +104,7 @@ fn map_create_index(
     name: Option<sqlast::ObjectName>,
     table_name: sqlast::ObjectName,
     columns: Vec<sqlast::OrderByExpr>,
+    using: Option<sqlast::Ident>,
 ) -> DbResult<Statement> {
     let index_name = name
         .ok_or_else(|| DbError::Parser("index name required".into()))
@@ -110,10 +112,29 @@ fn map_create_index(
     let table = normalize_object_name(&table_name)?;
     let column = map_index_column(columns.first())?;
 
+    // Parse the USING clause to determine index type
+    let index_type = match using {
+        Some(ident) => {
+            let method = ident.value.to_lowercase();
+            match method.as_str() {
+                "btree" => ast::IndexType::BTree,
+                "hash" => ast::IndexType::Hash,
+                other => {
+                    return Err(DbError::Parser(format!(
+                        "unsupported index type: {}. Supported: BTREE, HASH",
+                        other
+                    )))
+                }
+            }
+        }
+        None => ast::IndexType::BTree, // Default to B+Tree
+    };
+
     Ok(Statement::CreateIndex {
         name: index_name,
         table,
         column,
+        index_type,
     })
 }
 

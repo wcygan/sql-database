@@ -20,12 +20,14 @@ members = [
     "crates/testsupport",
     "crates/raft",
     "crates/btree",
+    "crates/hash",
 ]
 
 resolver = "2"
 
 [workspace.dependencies]
 btree = { path = "crates/btree" }
+hash = { path = "crates/hash" }
 buffer = { path = "crates/buffer" }
 catalog = { path = "crates/catalog" }
 client = { path = "crates/client" }

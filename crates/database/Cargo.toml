@@ -10,6 +10,7 @@ catalog = { workspace = true }
 common = { workspace = true }
 buffer = { workspace = true }
 expr = { workspace = true }
+hash = { workspace = true }
 parser = { workspace = true }
 planner = { workspace = true }
 executor = { workspace = true }

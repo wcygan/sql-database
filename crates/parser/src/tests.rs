@@ -41,10 +41,12 @@ fn parse_create_and_drop_statements() {
             name,
             table,
             column,
+            index_type,
         } => {
             assert_eq!(name, "idx_users_name");
             assert_eq!(table, "users");
             assert_eq!(column, "name");
+            assert_eq!(*index_type, IndexType::BTree); // Default type
         }
         other => panic!("expected CreateIndex, got {other:?}"),
     }
@@ -284,6 +286,7 @@ fn sql_subset_v1_example_script() {
             name,
             table,
             column,
+            ..
         } => {
             assert_eq!(name, "idx_users_id");
             assert_eq!(table, "users");
@@ -523,6 +526,53 @@ fn create_index_supports_qualified_columns() {
     let stmt = stmt("CREATE INDEX idx_users_name ON users (users.name)");
     match stmt {
         Statement::CreateIndex { column, .. } => assert_eq!(column, "name"),
+        other => panic!("expected CreateIndex, got {other:?}"),
+    }
+}
+
+#[test]
+fn create_index_using_hash() {
+    let stmt = stmt("CREATE INDEX idx_users_id ON users USING HASH (id)");
+    match stmt {
+        Statement::CreateIndex {
+            name,
+            column,
+            index_type,
+            ..
+        } => {
+            assert_eq!(name, "idx_users_id");
+            assert_eq!(column, "id");
+            assert_eq!(index_type, IndexType::Hash);
+        }
+        other => panic!("expected CreateIndex, got {other:?}"),
+    }
+}
+
+#[test]
+fn create_index_using_btree() {
+    let stmt = stmt("CREATE INDEX idx_users_name ON users USING BTREE (name)");
+    match stmt {
+        Statement::CreateIndex {
+            name,
+            column,
+            index_type,
+            ..
+        } => {
+            assert_eq!(name, "idx_users_name");
+            assert_eq!(column, "name");
+            assert_eq!(index_type, IndexType::BTree);
+        }
+        other => panic!("expected CreateIndex, got {other:?}"),
+    }
+}
+
+#[test]
+fn create_index_default_is_btree() {
+    let stmt = stmt("CREATE INDEX idx_users_id ON users (id)");
+    match stmt {
+        Statement::CreateIndex { index_type, .. } => {
+            assert_eq!(index_type, IndexType::BTree);
+        }
         other => panic!("expected CreateIndex, got {other:?}"),
     }
 }

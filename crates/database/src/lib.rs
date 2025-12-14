@@ -538,7 +538,11 @@ impl Database {
                 name,
                 table,
                 column,
-            } => self.execute_create_index(name, table, column).await,
+                index_type,
+            } => {
+                self.execute_create_index(name, table, column, index_type)
+                    .await
+            }
 
             Statement::DropIndex { name } => self.execute_drop_index(name).await,
 
@@ -662,13 +666,14 @@ impl Database {
 
     /// Execute CREATE INDEX statement.
     ///
-    /// Creates the index metadata in the catalog and builds the B+Tree index
-    /// by scanning all existing rows in the table.
+    /// Creates the index metadata in the catalog and builds the index
+    /// (BTree or Hash) by scanning all existing rows in the table.
     async fn execute_create_index(
         &self,
         name: String,
         table: String,
         column: String,
+        index_type: parser::IndexType,
     ) -> Result<QueryResult> {
         let catalog = self.catalog.clone();
         let catalog_path = self.catalog_path.clone();
@@ -677,13 +682,19 @@ impl Database {
         tokio::task::spawn_blocking(move || {
             let mut catalog_lock = catalog.blocking_write();
 
+            // Convert parser IndexType to catalog IndexKind
+            let catalog_kind = match index_type {
+                parser::IndexType::BTree => IndexKind::BTree,
+                parser::IndexType::Hash => IndexKind::Hash,
+            };
+
             // Create the index metadata
             let index_id = catalog_lock
                 .create_index()
                 .table_name(&table)
                 .index_name(&name)
                 .columns(&[column.as_str()])
-                .kind(IndexKind::BTree)
+                .kind(catalog_kind.clone())
                 .call()
                 .map_err(anyhow::Error::from)?;
 
@@ -694,10 +705,28 @@ impl Database {
             let column_ordinals: Vec<usize> =
                 index_meta.columns.iter().map(|c| *c as usize).collect();
 
-            // Build the B+Tree index file
+            // Build the index file based on type
             let index_path = data_dir.join(format!("index_{}.idx", index_id.0));
-            let mut btree_index = btree::BTreeIndex::create(&index_path, index_id)
-                .map_err(|e| anyhow::anyhow!("failed to create B+Tree index: {}", e))?;
+
+            // Create a helper enum to manage both index types
+            enum IndexWriter {
+                BTree(btree::BTreeIndex),
+                Hash(hash::HashIndex),
+            }
+
+            let mut writer = match catalog_kind {
+                IndexKind::BTree => IndexWriter::BTree(
+                    btree::BTreeIndex::create(&index_path, index_id)
+                        .map_err(|e| anyhow::anyhow!("failed to create B+Tree index: {}", e))?,
+                ),
+                IndexKind::Hash => IndexWriter::Hash(
+                    hash::HashIndex::create(&index_path, index_id)
+                        .map_err(|e| anyhow::anyhow!("failed to create Hash index: {}", e))?,
+                ),
+                _ => {
+                    return Err(anyhow::anyhow!("unsupported index type"));
+                }
+            };
 
             // Scan existing rows and insert into the index
             let heap_path = data_dir.join(format!("{}.heap", table));
@@ -724,9 +753,18 @@ impl Database {
                                     .filter_map(|&ord| row.values.get(ord).cloned())
                                     .collect();
 
-                                btree_index.insert(key, rid).map_err(|e| {
-                                    anyhow::anyhow!("failed to insert into index: {}", e)
-                                })?;
+                                match &mut writer {
+                                    IndexWriter::BTree(btree) => {
+                                        btree.insert(key, rid).map_err(|e| {
+                                            anyhow::anyhow!("failed to insert into B+Tree: {}", e)
+                                        })?;
+                                    }
+                                    IndexWriter::Hash(hash) => {
+                                        hash.insert(key, rid).map_err(|e| {
+                                            anyhow::anyhow!("failed to insert into Hash: {}", e)
+                                        })?;
+                                    }
+                                }
                             }
                             Err(e) => {
                                 // Check if this is an empty slot or end of pages
@@ -751,9 +789,18 @@ impl Database {
                 }
             }
 
-            btree_index
-                .flush()
-                .map_err(|e| anyhow::anyhow!("failed to flush B+Tree index: {}", e))?;
+            // Flush the index
+            match &mut writer {
+                IndexWriter::BTree(btree) => {
+                    btree
+                        .flush()
+                        .map_err(|e| anyhow::anyhow!("failed to flush B+Tree index: {}", e))?;
+                }
+                IndexWriter::Hash(hash) => {
+                    hash.flush()
+                        .map_err(|e| anyhow::anyhow!("failed to flush Hash index: {}", e))?;
+                }
+            }
 
             catalog_lock
                 .save(&catalog_path)

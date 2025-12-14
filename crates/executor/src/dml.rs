@@ -4,13 +4,14 @@ use crate::{filter::eval_resolved_expr, ExecutionContext, Executor};
 use btree::BTreeIndex;
 use catalog::IndexKind;
 use common::{ColumnId, DbResult, ExecutionStats, RecordId, Row, TableId};
+use hash::HashIndex;
 use planner::ResolvedExpr;
 use std::time::Instant;
 use storage::HeapTable;
 use types::Value;
 use wal::WalRecord;
 
-/// Update all B+Tree indexes for a table after an INSERT.
+/// Update all secondary indexes (BTree and Hash) for a table after an INSERT.
 fn update_indexes_after_insert(
     ctx: &ExecutionContext,
     table_id: TableId,
@@ -20,10 +21,6 @@ fn update_indexes_after_insert(
     let table_meta = ctx.catalog.table_by_id(table_id)?;
 
     for index_meta in &table_meta.indexes {
-        if !matches!(index_meta.kind, IndexKind::BTree) {
-            continue;
-        }
-
         // Extract key columns from the row
         let key: Vec<Value> = index_meta
             .columns
@@ -31,19 +28,30 @@ fn update_indexes_after_insert(
             .filter_map(|&col_id| row.values.get(col_id as usize).cloned())
             .collect();
 
-        // Open and update the index
+        // Open and update the index based on kind
         let index_path = ctx.data_dir.join(format!("index_{}.idx", index_meta.id.0));
         if index_path.exists() {
-            let mut btree = BTreeIndex::open(&index_path, index_meta.id)?;
-            btree.insert(key, rid)?;
-            btree.flush()?;
+            match index_meta.kind {
+                IndexKind::BTree => {
+                    let mut btree = BTreeIndex::open(&index_path, index_meta.id)?;
+                    btree.insert(key, rid)?;
+                    btree.flush()?;
+                }
+                IndexKind::Hash => {
+                    let mut hash = HashIndex::open(&index_path, index_meta.id)?;
+                    hash.insert(key, rid)?;
+                    hash.flush()?;
+                }
+                // Bitmap and Trie indexes not yet implemented
+                IndexKind::Bitmap | IndexKind::Trie => {}
+            }
         }
     }
 
     Ok(())
 }
 
-/// Update all B+Tree indexes for a table after a DELETE.
+/// Update all secondary indexes (BTree and Hash) for a table after a DELETE.
 fn update_indexes_after_delete(
     ctx: &ExecutionContext,
     table_id: TableId,
@@ -53,10 +61,6 @@ fn update_indexes_after_delete(
     let table_meta = ctx.catalog.table_by_id(table_id)?;
 
     for index_meta in &table_meta.indexes {
-        if !matches!(index_meta.kind, IndexKind::BTree) {
-            continue;
-        }
-
         // Extract key columns from the row
         let key: Vec<Value> = index_meta
             .columns
@@ -64,19 +68,30 @@ fn update_indexes_after_delete(
             .filter_map(|&col_id| row.values.get(col_id as usize).cloned())
             .collect();
 
-        // Open and update the index
+        // Open and update the index based on kind
         let index_path = ctx.data_dir.join(format!("index_{}.idx", index_meta.id.0));
         if index_path.exists() {
-            let mut btree = BTreeIndex::open(&index_path, index_meta.id)?;
-            btree.delete(&key, rid)?;
-            btree.flush()?;
+            match index_meta.kind {
+                IndexKind::BTree => {
+                    let mut btree = BTreeIndex::open(&index_path, index_meta.id)?;
+                    btree.delete(&key, rid)?;
+                    btree.flush()?;
+                }
+                IndexKind::Hash => {
+                    let mut hash = HashIndex::open(&index_path, index_meta.id)?;
+                    hash.delete(&key, rid)?;
+                    hash.flush()?;
+                }
+                // Bitmap and Trie indexes not yet implemented
+                IndexKind::Bitmap | IndexKind::Trie => {}
+            }
         }
     }
 
     Ok(())
 }
 
-/// Update all B+Tree indexes for a table after an UPDATE.
+/// Update all secondary indexes (BTree and Hash) for a table after an UPDATE.
 /// This removes the old entry and inserts the new one.
 fn update_indexes_after_update(
     ctx: &ExecutionContext,
@@ -89,10 +104,6 @@ fn update_indexes_after_update(
     let table_meta = ctx.catalog.table_by_id(table_id)?;
 
     for index_meta in &table_meta.indexes {
-        if !matches!(index_meta.kind, IndexKind::BTree) {
-            continue;
-        }
-
         // Extract old and new key columns
         let old_key: Vec<Value> = index_meta
             .columns
@@ -106,13 +117,25 @@ fn update_indexes_after_update(
             .filter_map(|&col_id| new_row.values.get(col_id as usize).cloned())
             .collect();
 
-        // Open and update the index
+        // Open and update the index based on kind
         let index_path = ctx.data_dir.join(format!("index_{}.idx", index_meta.id.0));
         if index_path.exists() {
-            let mut btree = BTreeIndex::open(&index_path, index_meta.id)?;
-            btree.delete(&old_key, old_rid)?;
-            btree.insert(new_key, new_rid)?;
-            btree.flush()?;
+            match index_meta.kind {
+                IndexKind::BTree => {
+                    let mut btree = BTreeIndex::open(&index_path, index_meta.id)?;
+                    btree.delete(&old_key, old_rid)?;
+                    btree.insert(new_key, new_rid)?;
+                    btree.flush()?;
+                }
+                IndexKind::Hash => {
+                    let mut hash = HashIndex::open(&index_path, index_meta.id)?;
+                    hash.delete(&old_key, old_rid)?;
+                    hash.insert(new_key, new_rid)?;
+                    hash.flush()?;
+                }
+                // Bitmap and Trie indexes not yet implemented
+                IndexKind::Bitmap | IndexKind::Trie => {}
+            }
         }
     }
 
